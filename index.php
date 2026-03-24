@@ -40,6 +40,167 @@ $rate_data = $stmt->fetch();
 $usd_rub_rate = $rate_data ? $rate_data['rate'] : 92.50;
 
 // ============================================================================
+// ПОЛУЧЕНИЕ АКТИВОВ ПО СЕТЯМ ДЛЯ МОДАЛЬНОГО ОКНА (исправленная версия)
+// ============================================================================
+
+// Получаем все криптоактивы с детализацией по переводам
+$stmt = $pdo->query("
+    SELECT 
+        a.id as asset_id,
+        a.symbol,
+        a.name as asset_name,
+        a.type as asset_type,
+        p.id as portfolio_id,
+        p.platform_id,
+        p.quantity,
+        p.average_buy_price,
+        p.currency_code,
+        pl.name as platform_name
+    FROM portfolio p
+    JOIN assets a ON p.asset_id = a.id
+    JOIN platforms pl ON p.platform_id = pl.id
+    WHERE a.type = 'crypto' AND p.quantity > 0
+");
+$crypto_portfolio = $stmt->fetchAll();
+
+// Получаем все переводы с указанием сетей
+$stmt = $pdo->query("
+    SELECT 
+        to_platform_id,
+        asset_id,
+        quantity,
+        to_network as network,
+        transfer_date
+    FROM transfers
+    WHERE to_network IS NOT NULL AND to_network != ''
+    ORDER BY transfer_date ASC
+");
+$all_transfers = $stmt->fetchAll();
+
+// Группируем переводы по (platform_id, asset_id)
+$transfers_by_portfolio = [];
+foreach ($all_transfers as $transfer) {
+    $key = $transfer['to_platform_id'] . '_' . $transfer['asset_id'];
+    if (!isset($transfers_by_portfolio[$key])) {
+        $transfers_by_portfolio[$key] = [];
+    }
+    $transfers_by_portfolio[$key][] = $transfer;
+}
+
+// Распределяем активы по сетям
+$network_assets_grouped = [];
+
+foreach ($crypto_portfolio as $asset) {
+    $key = $asset['platform_id'] . '_' . $asset['asset_id'];
+    $total_quantity = floatval($asset['quantity']);
+    
+    // Ищем переводы для этой позиции
+    $transfers = isset($transfers_by_portfolio[$key]) ? $transfers_by_portfolio[$key] : [];
+    
+    if (empty($transfers)) {
+        // Нет переводов - сеть не определена
+        $network = 'UNKNOWN';
+        $quantity_in_network = $total_quantity;
+    } else {
+        // Суммируем количество по сетям
+        $network_quantities = [];
+        $total_transferred = 0;
+        
+        foreach ($transfers as $transfer) {
+            $network = $transfer['network'];
+            $quantity = floatval($transfer['quantity']);
+            
+            if (!isset($network_quantities[$network])) {
+                $network_quantities[$network] = 0;
+            }
+            $network_quantities[$network] += $quantity;
+            $total_transferred += $quantity;
+        }
+        
+        // Если сумма переводов меньше общего количества, остаток относим к последней сети
+        if ($total_transferred < $total_quantity && count($transfers) > 0) {
+            $last_network = $transfers[count($transfers) - 1]['network'];
+            $network_quantities[$last_network] += ($total_quantity - $total_transferred);
+        }
+        
+        // Для каждой сети создаем запись
+        foreach ($network_quantities as $network => $quantity_in_network) {
+            if ($quantity_in_network <= 0) continue;
+            
+            // Рассчитываем стоимость для этого количества
+            if ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC') {
+                $value = $quantity_in_network;
+            } else if ($asset['average_buy_price'] > 0) {
+                $value = $quantity_in_network * $asset['average_buy_price'];
+            } else {
+                $value = 0;
+            }
+            
+            if (!isset($network_assets_grouped[$network])) {
+                $network_assets_grouped[$network] = [
+                    'network' => $network,
+                    'assets' => [],
+                    'total_value_usd' => 0
+                ];
+            }
+            
+            $network_assets_grouped[$network]['assets'][] = [
+                'symbol' => $asset['symbol'],
+                'asset_name' => $asset['asset_name'],
+                'quantity' => $quantity_in_network,
+                'average_buy_price' => $asset['average_buy_price'],
+                'currency_code' => $asset['currency_code'],
+                'platform_name' => $asset['platform_name'],
+                'value_usd' => $value
+            ];
+            
+            $network_assets_grouped[$network]['total_value_usd'] += $value;
+        }
+        
+        continue; // Пропускаем добавление для UNKNOWN
+    }
+    
+    // Если нет переводов, добавляем в UNKNOWN
+    if ($total_quantity > 0) {
+        if ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC') {
+            $value = $total_quantity;
+        } else if ($asset['average_buy_price'] > 0) {
+            $value = $total_quantity * $asset['average_buy_price'];
+        } else {
+            $value = 0;
+        }
+        
+        if (!isset($network_assets_grouped['UNKNOWN'])) {
+            $network_assets_grouped['UNKNOWN'] = [
+                'network' => 'UNKNOWN',
+                'assets' => [],
+                'total_value_usd' => 0
+            ];
+        }
+        
+        $network_assets_grouped['UNKNOWN']['assets'][] = [
+            'symbol' => $asset['symbol'],
+            'asset_name' => $asset['asset_name'],
+            'quantity' => $total_quantity,
+            'average_buy_price' => $asset['average_buy_price'],
+            'currency_code' => $asset['currency_code'],
+            'platform_name' => $asset['platform_name'],
+            'value_usd' => $value
+        ];
+        
+        $network_assets_grouped['UNKNOWN']['total_value_usd'] += $value;
+    }
+}
+
+// Сортируем сети по общей стоимости
+uasort($network_assets_grouped, function($a, $b) {
+    return $b['total_value_usd'] <=> $a['total_value_usd'];
+});
+
+// Передаем данные в JavaScript
+$network_assets_json = json_encode($network_assets_grouped);
+
+// ============================================================================
 // ПОЛУЧЕНИЕ АКТИВОВ ПО ПЛОЩАДКЕ
 // ============================================================================
 
@@ -256,13 +417,13 @@ foreach ($crypto_assets as $asset) {
     }
 }
 
-// Формируем финальный массив для отображения
+// Используем те же данные, что и для модального окна
 $network_distribution_array = [];
-foreach ($network_values as $network => $value) {
-    if ($value > 0.01) {
+foreach ($network_assets_grouped as $network => $data) {
+    if ($network != 'UNKNOWN' && $data['total_value_usd'] > 0.01) {
         $network_distribution_array[] = [
             'network' => $network,
-            'total_value_usd' => $value
+            'total_value_usd' => $data['total_value_usd']
         ];
     }
 }
@@ -988,20 +1149,6 @@ function addDeposit($pdo, $platform_id, $amount, $currency_code, $date, $notes =
 function addTransfer($pdo, $from_platform_id, $to_platform_id, $asset_id, $quantity, 
                      $commission, $commission_currency, $from_network, $to_network, $date, $notes = '') {
     try {
-        error_log("=== НАЧАЛО addTransfer ===");
-        error_log("Параметры: " . print_r([
-            'from_platform_id' => $from_platform_id,
-            'to_platform_id' => $to_platform_id,
-            'asset_id' => $asset_id,
-            'quantity' => $quantity,
-            'commission' => $commission,
-            'commission_currency' => $commission_currency,
-            'from_network' => $from_network,
-            'to_network' => $to_network,
-            'date' => $date,
-            'notes' => $notes
-        ], true));
-        
         $pdo->beginTransaction();
         
         // Преобразуем пустые строки в NULL
@@ -1025,7 +1172,6 @@ function addTransfer($pdo, $from_platform_id, $to_platform_id, $asset_id, $quant
         ]);
         
         $transfer_id = $pdo->lastInsertId();
-        error_log("Перевод добавлен в transfers, ID: " . $transfer_id);
         
         // Проверяем наличие актива у отправителя
         $stmt = $pdo->prepare("
@@ -1034,8 +1180,6 @@ function addTransfer($pdo, $from_platform_id, $to_platform_id, $asset_id, $quant
         ");
         $stmt->execute([$asset_id, $from_platform_id]);
         $from_portfolio = $stmt->fetch();
-        
-        error_log("Портфель отправителя: " . print_r($from_portfolio, true));
         
         if (!$from_portfolio) {
             throw new Exception("У отправителя нет этого актива на выбранной площадке");
@@ -1055,11 +1199,9 @@ function addTransfer($pdo, $from_platform_id, $to_platform_id, $asset_id, $quant
                 WHERE id = ?
             ");
             $stmt->execute([$new_quantity, $from_portfolio['id']]);
-            error_log("Количество актива у отправителя уменьшено до: " . $new_quantity);
         } else {
             $stmt = $pdo->prepare("DELETE FROM portfolio WHERE id = ?");
             $stmt->execute([$from_portfolio['id']]);
-            error_log("Актив у отправителя удален (количество стало 0)");
         }
         
         // Получаем валюту актива
@@ -1075,7 +1217,6 @@ function addTransfer($pdo, $from_platform_id, $to_platform_id, $asset_id, $quant
             ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
         ");
         $stmt->execute([$asset_id, $to_platform_id, $quantity, $currency_code]);
-        error_log("Актив добавлен получателю: +" . $quantity);
         
         // Обрабатываем комиссию, если есть
         if ($commission > 0 && !empty($commission_currency)) {
@@ -1107,25 +1248,16 @@ function addTransfer($pdo, $from_platform_id, $to_platform_id, $asset_id, $quant
                         $stmt = $pdo->prepare("DELETE FROM portfolio WHERE id = ?");
                         $stmt->execute([$commission_portfolio['id']]);
                     }
-                    error_log("Комиссия списана: " . $commission . " " . $commission_currency);
-                } else {
-                    error_log("ВНИМАНИЕ: Недостаточно средств для комиссии, но перевод выполнен");
                 }
-            } else {
-                error_log("ВНИМАНИЕ: Актив для комиссии не найден: " . $commission_currency);
             }
         }
         
         $pdo->commit();
-        error_log("=== УСПЕШНОЕ ЗАВЕРШЕНИЕ addTransfer ===");
-        return true;
+        return ['success' => true, 'message' => ''];
         
     } catch (Exception $e) {
         $pdo->rollBack();
-        error_log("=== ОШИБКА В addTransfer ===");
-        error_log("Сообщение ошибки: " . $e->getMessage());
-        error_log("Трассировка: " . $e->getTraceAsString());
-        return false;
+        return ['success' => false, 'message' => $e->getMessage()];
     }
 }
 
@@ -1185,8 +1317,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_POST['transfer_date'],
                     $_POST['notes'] ?? ''
                 );
-                $response['success'] = $result;
-                $response['message'] = $result ? 'Перевод успешно добавлен' : 'Ошибка при добавлении перевода';
+                $response['success'] = $result['success'];
+                $response['message'] = $result['success'] ? 'Перевод успешно добавлен' : 'Ошибка: ' . $result['message'];
                 break;
                 
             case 'add_platform':
@@ -5525,6 +5657,27 @@ body.dark-theme {
             </div>
         </div>
 
+        <!-- Модальное окно активов сети -->
+        <div class="modal-overlay" id="networkAssetsModal">
+            <div class="modal" style="max-width: 650px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h2 id="networkAssetsModalTitle">
+                        <i class="fas fa-network-wired" style="color: #ff9f4a;"></i> 
+                        <span id="networkAssetsName">Активы сети</span>
+                    </h2>
+                    <button class="modal-close" id="closeNetworkAssetsModalBtn">&times;</button>
+                </div>
+                <div class="modal-body" id="networkAssetsBody" style="max-height: 60vh; overflow-y: auto;">
+                    <div style="text-align: center; padding: 30px; color: #6b7a8f;">
+                        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="closeNetworkAssetsModalFooterBtn">Закрыть</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Шапка сайта с логотипом и кнопками -->
         <div class="site-header">
             <div class="logo-container">
@@ -5674,8 +5827,8 @@ body.dark-theme {
                     <div style="display: flex; flex-direction: column; gap: 10px;">
                         <?php 
                         if (isset($network_distribution_array) && !empty($network_distribution_array)):
-                            $network_colors = ['#14b8a6', '#8b5cf6', '#ec4899', '#f59e0b'];
-                            $top_networks = array_slice($network_distribution_array, 0, 3);
+                            $network_colors = ['#14b8a6', '#8b5cf6', '#ec4899', '#f59e0b', '#3b82f6', '#ef4444'];
+                            $top_networks = array_slice($network_distribution_array, 0, 5);
                             foreach ($top_networks as $index => $network): 
                                 $percentage = $total_crypto > 0 ? round(($network['total_value_usd'] / $total_crypto) * 100, 1) : 0;
                                 $value_usd = $network['total_value_usd'];
@@ -5686,7 +5839,10 @@ body.dark-theme {
                                 else if (strpos($network_name, 'BEP') !== false) $network_icon = 'fa-bolt';
                                 else if (strpos($network_name, 'TRC') !== false) $network_icon = 'fa-t';
                         ?>
-                        <div style="display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center;">
+                        <div style="display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; cursor: pointer;" 
+                            onclick="openNetworkAssetsModal('<?= htmlspecialchars($network['network'], ENT_QUOTES) ?>')"
+                            onmouseover="this.style.opacity='0.8'" 
+                            onmouseout="this.style.opacity='1'">
                             <div style="display: flex; align-items: center; gap: 6px;">
                                 <i class="fab <?= $network_icon ?>" style="color: <?= $network_colors[$index % count($network_colors)] ?>; width: 16px; font-size: 12px;"></i>
                                 <span style="font-size: 13px; color: var(--text-secondary);; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><?= htmlspecialchars($network['network']) ?></span>
@@ -7516,6 +7672,12 @@ async function confirmTransfer() {
     const date = document.getElementById('transferDate').value;
     const notes = document.getElementById('transferNotes').value;
 
+    // Логируем отправляемые данные
+    console.log('Отправка перевода:', {
+        fromPlatformId, toPlatformId, assetId, quantity, 
+        commission, commissionCurrency, fromNetwork, toNetwork, date, notes
+    });
+
     // Проверки
     if (!fromPlatformId) {
         showNotification('error', 'Ошибка', 'Выберите площадку отправителя');
@@ -7557,6 +7719,12 @@ async function confirmTransfer() {
         }
     }
 
+    // Показываем индикатор загрузки
+    const confirmBtn = document.getElementById('confirmTransferBtn');
+    const originalText = confirmBtn.innerHTML;
+    confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Сохранение...';
+    confirmBtn.disabled = true;
+
     const formData = new FormData();
     formData.append('action', 'add_transfer');
     formData.append('from_platform_id', fromPlatformId);
@@ -7575,19 +7743,35 @@ async function confirmTransfer() {
             method: 'POST',
             body: formData
         });
-        const result = await response.json();
+        
+        // Получаем текст ответа для отладки
+        const responseText = await response.text();
+        console.log('Ответ сервера (сырой):', responseText);
+        
+        let result;
+        try {
+            result = JSON.parse(responseText);
+        } catch (e) {
+            console.error('Ошибка парсинга JSON:', e);
+            showNotification('error', 'Ошибка сервера', 'Сервер вернул некорректный ответ: ' + responseText.substring(0, 200));
+            return;
+        }
         
         if (result.success) {
             showNotification('success', 'Успешно', result.message);
             closeTransferModal();
             setTimeout(() => location.reload(), 1500);
         } else {
+            // Показываем подробную ошибку
             showNotification('error', 'Ошибка', result.message);
-            console.error('Transfer error:', result.message);
+            console.error('Transfer error details:', result);
         }
     } catch (error) {
-        showNotification('error', 'Ошибка сети', 'Не удалось отправить запрос');
+        showNotification('error', 'Ошибка сети', 'Не удалось отправить запрос: ' + error.message);
         console.error('Network error:', error);
+    } finally {
+        confirmBtn.innerHTML = originalText;
+        confirmBtn.disabled = false;
     }
 }
 
@@ -7833,16 +8017,36 @@ async function saveNewPlatform() {
             // ОБНОВЛЯЕМ ВСЕ СПИСКИ ПЛОЩАДОК
             refreshAllPlatformLists();
             
+            // ДОПОЛНИТЕЛЬНО: обновляем конкретные элементы для transferModal
+            // Обновляем популярные площадки для отправителя и получателя
+            updateTransferModalPlatforms();
+            
+            // Определяем, в каком режиме мы добавляли площадку
+            const context = currentModalContext.source;
+            const subMode = currentModalContext.subMode;
+            
             // Выбираем добавленную площадку в зависимости от контекста
-            if (window.currentPlatformMode === 'from') {
-                selectFromPlatform(result.platform_id, name);
-            } else if (window.currentPlatformMode === 'to') {
-                selectToPlatform(result.platform_id, name);
-            } else {
+            if (context === 'transfer') {
+                if (subMode === 'from') {
+                    selectFromPlatform(result.platform_id, name);
+                } else if (subMode === 'to') {
+                    selectToPlatform(result.platform_id, name);
+                }
+            } else if (context === 'buy' && subMode === 'from') {
+                selectTradeFromPlatform(result.platform_id, name);
+            } else if (context === 'buy' || context === 'sell') {
+                selectTradePlatform(result.platform_id, name);
+            } else if (context === 'deposit') {
                 selectPlatform(result.platform_id, name);
             }
             
             closeAddPlatformModal();
+            
+            // Если модальное окно выбора площадки было открыто, закрываем его
+            const platformSelectModal = document.getElementById('platformSelectModal');
+            if (platformSelectModal && platformSelectModal.classList.contains('active')) {
+                closePlatformModal();
+            }
         } else {
             showNotification('error', 'Ошибка', result.message || 'Не удалось добавить площадку');
         }
@@ -7855,7 +8059,6 @@ function refreshAllPlatformLists() {
     // Обновляем список в модальном окне выбора площадки (если оно открыто)
     const platformModal = document.getElementById('platformSelectModal');
     if (platformModal && platformModal.classList.contains('active')) {
-        // Обновляем фильтрацию с текущим поисковым запросом
         const searchInput = document.getElementById('platformSearch');
         if (searchInput) {
             filterPlatforms(searchInput.value);
@@ -7877,10 +8080,28 @@ function refreshAllPlatformLists() {
     popularPlatformsContainers.forEach(containerId => {
         const container = document.getElementById(containerId);
         if (container) {
-            // Сохраняем текущие onclick обработчики? Нет, пересоздаем
             const popularPlatforms = platformsData.slice(0, 5);
+            let onclickHandler = '';
+            
+            // Определяем правильный обработчик для каждого контейнера
+            if (containerId === 'transferFromPopularPlatforms') {
+                onclickHandler = 'selectFromPlatform';
+            } else if (containerId === 'transferToPopularPlatforms') {
+                onclickHandler = 'selectToPlatform';
+            } else if (containerId === 'tradeFromPopularPlatforms') {
+                onclickHandler = 'selectTradeFromPlatform';
+            } else if (containerId === 'tradePopularPlatforms') {
+                onclickHandler = 'selectTradePlatform';
+            } else if (containerId === 'depositPopularPlatforms') {
+                onclickHandler = 'selectPlatform';
+            } else if (containerId === 'limitPopularPlatforms') {
+                onclickHandler = 'selectLimitPlatform';
+            } else {
+                onclickHandler = 'selectPlatformFromList';
+            }
+            
             container.innerHTML = popularPlatforms.map(platform => `
-                <button type="button" class="quick-platform-btn" onclick="selectPlatformFromList('${platform.id}', '${platform.name.replace(/'/g, "\\'")}')">
+                <button type="button" class="quick-platform-btn" onclick="${onclickHandler}('${platform.id}', '${platform.name.replace(/'/g, "\\'")}')">
                     ${platform.name}
                 </button>
             `).join('');
@@ -7897,17 +8118,78 @@ function refreshAllPlatformLists() {
     platformsLists.forEach(listId => {
         const list = document.getElementById(listId);
         if (list && list.style.display !== 'none') {
-            // Если список видим, обновляем его
             const scheme = getColorScheme();
             const platformScheme = scheme.platform || modalColorSchemes.default.platform;
+            
+            let onclickHandler = '';
+            if (listId === 'transferFromPlatformsList') {
+                onclickHandler = 'selectFromPlatform';
+            } else if (listId === 'transferToPlatformsList') {
+                onclickHandler = 'selectToPlatform';
+            } else {
+                onclickHandler = 'selectPlatform';
+            }
+            
             list.innerHTML = platformsData.map(platform => `
-                <div onclick="selectPlatformFromList('${platform.id}', '${platform.name.replace(/'/g, "\\'")}')" 
+                <div onclick="${onclickHandler}('${platform.id}', '${platform.name.replace(/'/g, "\\'")}')" 
                      style="padding: 10px; cursor: pointer; border-radius: 8px; margin-bottom: 2px; display: flex; align-items: center; gap: 10px;">
                     <span style="font-weight: 600; color: ${platformScheme.listItemColor};">${platform.name}</span>
                 </div>
             `).join('');
         }
     });
+    
+    // Дополнительно обновляем для transferModal
+    updateTransferModalPlatforms();
+}
+
+function updateTransferModalPlatforms() {
+    // Обновляем популярные площадки для отправителя
+    const fromContainer = document.getElementById('transferFromPopularPlatforms');
+    if (fromContainer) {
+        const popularPlatforms = platformsData.slice(0, 5);
+        fromContainer.innerHTML = popularPlatforms.map(platform => `
+            <button type="button" class="quick-platform-btn" onclick="selectFromPlatform('${platform.id}', '${platform.name.replace(/'/g, "\\'")}')">
+                ${platform.name}
+            </button>
+        `).join('');
+    }
+    
+    // Обновляем популярные площадки для получателя
+    const toContainer = document.getElementById('transferToPopularPlatforms');
+    if (toContainer) {
+        const popularPlatforms = platformsData.slice(0, 5);
+        toContainer.innerHTML = popularPlatforms.map(platform => `
+            <button type="button" class="quick-platform-btn" onclick="selectToPlatform('${platform.id}', '${platform.name.replace(/'/g, "\\'")}')">
+                ${platform.name}
+            </button>
+        `).join('');
+    }
+    
+    // Обновляем скрытые списки площадок
+    const fromList = document.getElementById('transferFromPlatformsList');
+    if (fromList && fromList.style.display !== 'none') {
+        const scheme = getColorScheme();
+        const platformScheme = scheme.platform || modalColorSchemes.default.platform;
+        fromList.innerHTML = platformsData.map(platform => `
+            <div onclick="selectFromPlatform('${platform.id}', '${platform.name.replace(/'/g, "\\'")}')" 
+                 style="padding: 10px; cursor: pointer; border-radius: 8px; margin-bottom: 2px; display: flex; align-items: center; gap: 10px;">
+                <span style="font-weight: 600; color: ${platformScheme.listItemColor};">${platform.name}</span>
+            </div>
+        `).join('');
+    }
+    
+    const toList = document.getElementById('transferToPlatformsList');
+    if (toList && toList.style.display !== 'none') {
+        const scheme = getColorScheme();
+        const platformScheme = scheme.platform || modalColorSchemes.default.platform;
+        toList.innerHTML = platformsData.map(platform => `
+            <div onclick="selectToPlatform('${platform.id}', '${platform.name.replace(/'/g, "\\'")}')" 
+                 style="padding: 10px; cursor: pointer; border-radius: 8px; margin-bottom: 2px; display: flex; align-items: center; gap: 10px;">
+                <span style="font-weight: 600; color: ${platformScheme.listItemColor};">${platform.name}</span>
+            </div>
+        `).join('');
+    }
 }
 
 function addNewCurrencyAndSelect(currencyCode, context = 'default', mode = 'default') {
@@ -11365,6 +11647,268 @@ function closePlatformAssetsModal() {
     if (modal) {
         modal.classList.remove('active');
     }
+}
+
+// ============================================================================
+// МОДАЛЬНОЕ ОКНО АКТИВОВ СЕТИ
+// ============================================================================
+
+// Данные по активам сетей из PHP
+const networkAssetsData = <?= $network_assets_json ?>;
+
+function openNetworkAssetsModal(networkName) {
+    const modal = document.getElementById('networkAssetsModal');
+    const titleSpan = document.getElementById('networkAssetsName');
+    const body = document.getElementById('networkAssetsBody');
+    
+    if (!modal || !body) return;
+    
+    // Устанавливаем заголовок
+    titleSpan.textContent = networkName;
+    
+    // Показываем загрузку
+    body.innerHTML = '<div style="text-align: center; padding: 30px;"><i class="fas fa-spinner fa-spin"></i> Загрузка активов...</div>';
+    
+    modal.classList.add('active');
+    
+    // Получаем активы для этой сети
+    const networkData = networkAssetsData[networkName];
+    
+    if (!networkData || !networkData.assets || networkData.assets.length === 0) {
+        body.innerHTML = `
+            <div style="text-align: center; padding: 40px 20px;">
+                <i class="fas fa-box-open" style="font-size: 48px; opacity: 0.3; margin-bottom: 16px; display: block;"></i>
+                <p style="color: #6b7a8f;">В сети "${networkName}" нет активов</p>
+            </div>
+        `;
+        return;
+    }
+    
+    // Сортируем активы по стоимости (от большей к меньшей)
+    const assets = [...networkData.assets].sort((a, b) => (parseFloat(b.value_usd) || 0) - (parseFloat(a.value_usd) || 0));
+    
+    // Рассчитываем общую стоимость
+    let totalValueUsd = networkData.total_value_usd;
+    
+    // Получаем курс USD/RUB
+    const usdRubRate = <?= $usd_rub_rate ?>;
+    const totalValueRub = totalValueUsd * usdRubRate;
+    
+    // Форматируем общую стоимость
+    let totalUsdStr = totalValueUsd.toFixed(2);
+    let totalUsdParts = totalUsdStr.split('.');
+    totalUsdParts[0] = totalUsdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    const totalUsdFormatted = totalUsdParts[0] + (totalUsdParts[1] ? '.' + totalUsdParts[1] : '');
+    
+    let totalRubStr = Math.round(totalValueRub).toString();
+    totalRubStr = totalRubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    
+    // Формируем HTML
+    let html = `
+        <style>
+            .network-assets-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            .network-assets-table th {
+                text-align: left;
+                padding: 12px 8px;
+                background: var(--bg-tertiary, #f8fafd);
+                font-weight: 600;
+                font-size: 13px;
+                color: var(--text-secondary, #6b7a8f);
+                border-bottom: 2px solid var(--border-color, #edf2f7);
+            }
+            .network-assets-table td {
+                padding: 12px 8px;
+                border-bottom: 1px solid var(--border-color, #edf2f7);
+                vertical-align: middle;
+            }
+            .network-assets-table tr:hover {
+                background: var(--bg-tertiary, #f8fafd);
+            }
+            .network-assets-symbol {
+                font-weight: 600;
+                color: var(--text-primary, #2c3e50);
+            }
+            .network-assets-quantity {
+                font-family: monospace;
+                text-align: right;
+            }
+            .network-assets-value {
+                text-align: right;
+                font-weight: 500;
+                color: #ff9f4a;
+            }
+            .network-assets-summary {
+                background: var(--bg-tertiary, #f0f3f7);
+                border-radius: 12px;
+                padding: 16px;
+                margin-top: 16px;
+            }
+            .network-assets-summary-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 8px 0;
+            }
+            .network-assets-summary-row:first-child {
+                border-bottom: 1px solid var(--border-color, #e0e6ed);
+                margin-bottom: 8px;
+                padding-bottom: 12px;
+            }
+            .network-assets-total {
+                font-weight: 700;
+                font-size: 18px;
+                color: #ff9f4a;
+            }
+            .dark-theme .network-assets-summary {
+                background: var(--bg-tertiary);
+            }
+        </style>
+        
+        <table class="network-assets-table">
+            <thead>
+                <tr>
+                    <th>Актив</th>
+                    <th style="text-align: right;">Количество</th>
+                    <th style="text-align: right;">Средняя цена</th>
+                    <th style="text-align: right;">Стоимость</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    assets.forEach(asset => {
+        const quantityNum = parseFloat(asset.quantity) || 0;
+        const avgPriceNum = parseFloat(asset.average_buy_price) || 0;
+        const valueUsdNum = parseFloat(asset.value_usd) || 0;
+        
+        // ========== ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА (МАКСИМУМ 8 ЗНАКОВ) ==========
+        let quantityFormatted = '';
+        
+        // Преобразуем число в строку
+        let quantityStr = quantityNum.toString();
+        
+        // Если число в экспоненциальной форме
+        if (quantityStr.includes('e')) {
+            quantityStr = quantityNum.toFixed(12);
+        }
+        
+        // Разделяем целую и дробную части
+        let quantityParts = quantityStr.split('.');
+        
+        // Форматируем целую часть с пробелами
+        quantityParts[0] = quantityParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        
+        if (quantityParts.length > 1 && quantityParts[1]) {
+            // Берем дробную часть, ограничиваем до 8 знаков, убираем лишние нули в конце
+            let decimalPart = quantityParts[1];
+            
+            // Ограничиваем до 8 знаков
+            if (decimalPart.length > 8) {
+                decimalPart = decimalPart.substring(0, 8);
+            }
+            
+            // Убираем лишние нули в конце (но не все, если это не целое число)
+            decimalPart = decimalPart.replace(/0+$/, '');
+            
+            if (decimalPart.length > 0) {
+                quantityFormatted = quantityParts[0] + '.' + decimalPart;
+            } else {
+                quantityFormatted = quantityParts[0];
+            }
+        } else {
+            quantityFormatted = quantityParts[0];
+        }
+        
+        // ========== ФОРМАТИРОВАНИЕ СРЕДНЕЙ ЦЕНЫ ==========
+        let avgPriceFormatted = '—';
+        let avgPriceCurrency = '';
+        if (avgPriceNum > 0) {
+            // Для цены оставляем до 6 знаков после запятой
+            let priceStr = avgPriceNum.toFixed(8).replace(/\.?0+$/, '');
+            let priceParts = priceStr.split('.');
+            priceParts[0] = priceParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            avgPriceFormatted = priceParts[0] + (priceParts[1] ? '.' + priceParts[1] : '');
+            avgPriceCurrency = asset.currency_code || 'USD';
+        }
+        
+        // ========== ФОРМАТИРОВАНИЕ СТОИМОСТИ ==========
+        const valueRubNum = valueUsdNum * usdRubRate;
+        
+        // Форматируем USD
+        let usdStr = valueUsdNum.toFixed(2);
+        let usdParts = usdStr.split('.');
+        usdParts[0] = usdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        const usdFormatted = usdParts[0] + (usdParts[1] ? '.' + usdParts[1] : '');
+        
+        // Форматируем RUB
+        let rubStr = Math.round(valueRubNum).toString();
+        rubStr = rubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        
+        const valueFormatted = `$${usdFormatted}<br><span style="font-size: 11px; color: #6b7a8f;">${rubStr} ₽</span>`;
+        
+        // Определяем иконку для актива
+        let assetIcon = getAssetIcon(asset.symbol);
+        
+        html += `
+            <tr>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="width: 32px; height: 32px; background: var(--bg-tertiary, #f0f3f7); border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                            <i class="${assetIcon.icon}" style="color: ${assetIcon.color};"></i>
+                        </div>
+                        <div>
+                            <div class="network-assets-symbol">${asset.symbol}</div>
+                            <div style="font-size: 11px; color: #6b7a8f;">${asset.platform_name}</div>
+                        </div>
+                    </div>
+                </td>
+                <td class="network-assets-quantity" style="font-family: monospace; white-space: nowrap;">${quantityFormatted}</td>
+                <td class="network-assets-quantity">${avgPriceFormatted} ${avgPriceCurrency}</td>
+                <td class="network-assets-value">${valueFormatted}</td>
+            </tr>
+        `;
+    });
+    
+    html += `
+            </tbody>
+        </table>
+        
+        <div class="network-assets-summary">
+            <div class="network-assets-summary-row">
+                <span style="font-weight: 600;">Всего активов:</span>
+                <span style="font-weight: 600;">${assets.length}</span>
+            </div>
+            <div class="network-assets-summary-row">
+                <span>Общая стоимость в сети ${networkName}:</span>
+                <span class="network-assets-total">$${totalUsdFormatted}<br><span style="font-size: 12px; font-weight: normal;">${totalRubStr} ₽</span></span>
+            </div>
+        </div>
+    `;
+    
+    body.innerHTML = html;
+}
+
+function closeNetworkAssetsModal() {
+    const modal = document.getElementById('networkAssetsModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+// Добавляем обработчики для модального окна активов сети
+document.getElementById('closeNetworkAssetsModalBtn')?.addEventListener('click', closeNetworkAssetsModal);
+document.getElementById('closeNetworkAssetsModalFooterBtn')?.addEventListener('click', closeNetworkAssetsModal);
+
+// Закрытие по клику на overlay
+const networkAssetsModal = document.getElementById('networkAssetsModal');
+if (networkAssetsModal) {
+    networkAssetsModal.addEventListener('click', (e) => {
+        if (e.target === networkAssetsModal) {
+            closeNetworkAssetsModal();
+        }
+    });
 }
 </script>
 </html>
