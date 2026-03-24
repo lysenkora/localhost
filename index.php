@@ -281,7 +281,7 @@ $networks_db = $stmt->fetchAll();
 $networks_json = json_encode($networks_db);
 
 // ============================================================================
-// ПОЛУЧЕНИЕ РАСПРЕДЕЛЕНИЯ ПО ПЛОЩАДКАМ И СЕТЯМ
+// ПОЛУЧЕНИЕ РАСПРЕДЕЛЕНИЯ ПО ПЛОЩАДКАМ
 // ============================================================================
 
 // Получаем распределение по площадкам (исправленный запрос)
@@ -290,7 +290,7 @@ $stmt = $pdo->query("
         p.id as platform_id,
         p.name as platform_name,
         p.type as platform_type,
-        SUM(
+        COALESCE(SUM(
             CASE 
                 -- RUB конвертируем в USD
                 WHEN a.symbol = 'RUB' THEN pl.quantity / " . $usd_rub_rate . "
@@ -303,18 +303,33 @@ $stmt = $pdo->query("
                         WHEN pl.currency_code = 'USD' THEN pl.quantity * pl.average_buy_price
                         -- Если цена в RUB, конвертируем в USD
                         WHEN pl.currency_code = 'RUB' THEN (pl.quantity * pl.average_buy_price) / " . $usd_rub_rate . "
-                        -- Иначе считаем что цена уже в USD (для USDT и т.д.)
+                        -- Если цена в SOL, нужно конвертировать SOL в USD
+                        WHEN pl.currency_code = 'SOL' THEN 
+                            (pl.quantity * pl.average_buy_price) * 
+                            (SELECT COALESCE(rate, 125) FROM exchange_rates 
+                             WHERE from_currency = 'SOL' AND to_currency = 'USD' 
+                             ORDER BY date DESC LIMIT 1)
                         ELSE pl.quantity * pl.average_buy_price
                     END
+                -- Для стейблкоинов (USDT, USDC) уже посчитали выше
+                WHEN a.symbol IN ('USDT', 'USDC') THEN pl.quantity
+                -- Для криптовалют без средней цены пытаемся получить цену из trades
+                WHEN a.type = 'crypto' THEN
+                    COALESCE(
+                        (SELECT price FROM trades t 
+                         WHERE t.asset_id = a.id AND t.operation_type = 'buy' 
+                         ORDER BY t.operation_date DESC LIMIT 1),
+                        0
+                    ) * pl.quantity
+                -- Для всего остального
                 ELSE 0
             END
-        ) as total_value_usd
-    FROM portfolio pl
-    JOIN assets a ON pl.asset_id = a.id
-    JOIN platforms p ON pl.platform_id = p.id
-    WHERE pl.quantity > 0
+        ), 0) as total_value_usd
+    FROM platforms p
+    LEFT JOIN portfolio pl ON p.id = pl.platform_id AND pl.quantity > 0
+    LEFT JOIN assets a ON pl.asset_id = a.id
+    WHERE p.is_active = 1
     GROUP BY p.id, p.name, p.type
-    HAVING total_value_usd > 0
     ORDER BY total_value_usd DESC
 ");
 $platform_distribution = $stmt->fetchAll();
@@ -9234,7 +9249,7 @@ function showAssetHistory(data) {
     } else {
         let html = '';
         data.history.forEach(item => {
-            // Исправленное форматирование даты без сдвига часового пояса
+            // Форматирование даты
             let formattedDate = item.date;
             if (typeof item.date === 'string' && item.date.match(/^\d{4}-\d{2}-\d{2}/)) {
                 const parts = item.date.split('T')[0].split('-');
@@ -9249,77 +9264,111 @@ function showAssetHistory(data) {
                 }
             }
             
-            // Функция для форматирования чисел без принудительного округления
-            const formatNumber = (num) => {
+            // Функция для форматирования чисел
+            const formatNumber = (num, isFiat = false) => {
                 if (num === null || num === undefined) return '';
-                // Преобразуем в строку и убираем лишние нули в конце
+                
+                // Преобразуем в строку
                 let str = num.toString();
-                if (str.includes('.')) {
-                    str = str.replace(/\.?0+$/, '');
+                // Если число в экспоненциальной форме
+                if (str.includes('e')) {
+                    str = num.toFixed(12);
                 }
+                
+                let formatted;
+                
+                // Для фиатных валют (RUB, USD, EUR) - 2 знака после запятой
+                if (isFiat) {
+                    let rounded = parseFloat(num).toFixed(2);
+                    // Убираем .00 если они есть
+                    formatted = rounded.replace(/\.?0+$/, '');
+                } else {
+                    // Для криптовалют - до 8 знаков, убираем лишние нули
+                    let rounded = parseFloat(num).toFixed(8);
+                    formatted = rounded.replace(/\.?0+$/, '');
+                }
+                
                 // Добавляем пробелы между разрядами в целой части
-                let parts = str.split('.');
+                let parts = formatted.split('.');
                 parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-                return parts.join('.');
+                
+                if (parts.length > 1 && parts[1]) {
+                    return parts[0] + '.' + parts[1];
+                }
+                return parts[0];
             };
             
-            const quantity = formatNumber(item.quantity);
-            const price = formatNumber(item.price);
-            const total = formatNumber(item.quantity * item.price);
+            // Определяем, является ли валюта фиатной
+            const isFiatCurrency = (curr) => {
+                return curr === 'RUB' || curr === 'USD' || curr === 'EUR' || 
+                       curr === 'GBP' || curr === 'CNY' || curr === 'JPY';
+            };
+            
+            const isFiat = isFiatCurrency(item.price_currency);
+            const quantity = formatNumber(item.quantity, false);
+            const price = formatNumber(item.price, isFiat);
+            const total = formatNumber(item.quantity * item.price, isFiat);
             
             let operationColor = 'var(--text-secondary);';
-            let operationText = item.description || '';
+            let operationText = '';
             let priceText = '';
             let totalText = '';
             
             switch(item.operation_type) {
                 case 'buy':
                     operationColor = '#00a86b';
+                    operationText = `Покупка ${quantity} ${data.symbol}`;
                     priceText = `по ${price} ${item.price_currency}`;
                     totalText = `💰 ${total} ${item.price_currency}`;
                     break;
                 case 'sell':
                     operationColor = '#e53e3e';
+                    operationText = `Продажа ${quantity} ${data.symbol}`;
                     priceText = `по ${price} ${item.price_currency}`;
                     totalText = `💰 ${total} ${item.price_currency}`;
                     break;
                 case 'payment':
                     operationColor = '#e53e3e';
-                    priceText = 'списание';
+                    operationText = `Списание ${quantity} ${item.price_currency}`;
+                    priceText = '';
                     totalText = `💸 ${quantity} ${item.price_currency}`;
                     break;
                 case 'income':
                     operationColor = '#00a86b';
-                    priceText = 'поступление';
+                    operationText = `Поступление ${quantity} ${item.price_currency}`;
+                    priceText = '';
                     totalText = `💰 ${quantity} ${item.price_currency}`;
                     break;
                 case 'deposit':
                     operationColor = '#1a5cff';
-                    priceText = 'пополнение';
+                    operationText = `Пополнение ${quantity} ${data.symbol}`;
+                    priceText = '';
                     totalText = `➕ ${quantity} ${data.symbol}`;
                     break;
                 case 'transfer_in':
                     operationColor = '#ff9f4a';
-                    priceText = 'входящий перевод';
+                    operationText = `Входящий перевод ${quantity} ${data.symbol}`;
+                    priceText = '';
                     totalText = `📥 ${quantity} ${data.symbol}`;
                     break;
                 case 'transfer_out':
                     operationColor = '#ff9f4a';
-                    priceText = 'исходящий перевод';
+                    operationText = `Исходящий перевод ${quantity} ${data.symbol}`;
+                    priceText = '';
                     totalText = `📤 ${quantity} ${data.symbol}`;
                     break;
             }
             
             html += `
-                <div class="purchase-history-item">
-                    <div>
-                        <div class="purchase-history-date">${formattedDate}</div>
-                        <div style="font-size: 12px; color: #6b7a8f; margin-top: 2px;">${item.platform || '—'}</div>
+                <div class="purchase-history-item" style="padding: 12px; border-bottom: 1px solid var(--border-color, #edf2f7);">
+                    <div style="flex: 1;">
+                        <div class="purchase-history-date" style="font-size: 13px; color: #6b7a8f; margin-bottom: 4px;">${formattedDate}</div>
+                        <div style="font-size: 12px; color: #6b7a8f;">${item.platform || '—'}</div>
                     </div>
-                    <div class="purchase-history-details">
-                        <div class="purchase-history-quantity" style="color: ${operationColor};">${item.description || operationText}</div>
-                        <div class="purchase-history-price">${priceText}</div>
-                        <div class="purchase-history-total" style="color: ${operationColor};">${totalText}</div>
+                    <div style="text-align: right;">
+                        <div style="color: ${operationColor}; font-weight: 500; margin-bottom: 4px;">${operationText}</div>
+                        ${priceText ? `<div style="font-size: 12px; color: #6b7a8f;">${priceText}</div>` : ''}
+                        <div style="font-size: 13px; font-weight: 600; color: ${operationColor}; margin-top: 4px;">${totalText}</div>
                     </div>
                 </div>
             `;
