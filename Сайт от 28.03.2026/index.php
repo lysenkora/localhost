@@ -40,6 +40,155 @@ $rate_data = $stmt->fetch();
 $usd_rub_rate = $rate_data ? $rate_data['rate'] : 92.50;
 
 // ============================================================================
+// ПОЛУЧЕНИЕ АКТИВОВ ПО ТИПАМ КРИПТОВАЛЮТ (Altcoins, Stablecoins)
+// ============================================================================
+
+// Получаем все криптоактивы с детализацией по типам
+$stmt = $pdo->query("
+    SELECT 
+        CASE 
+            WHEN a.symbol IN ('USDT', 'USDC', 'DAI', 'BUSD') THEN 'stablecoins'
+            WHEN a.symbol IN ('BTC', 'ETH') THEN 'major'
+            ELSE 'altcoins'
+        END as crypto_type,
+        a.id as asset_id,
+        a.symbol,
+        a.name as asset_name,
+        a.type as asset_type,
+        a.currency_code,
+        p.quantity,
+        p.average_buy_price,
+        pl.name as platform_name,
+        pl.id as platform_id,
+        CASE 
+            WHEN a.symbol IN ('USDT', 'USDC', 'USD') THEN p.quantity
+            ELSE p.quantity * COALESCE(p.average_buy_price, 0)
+        END as value_usd
+    FROM portfolio p
+    JOIN assets a ON p.asset_id = a.id
+    JOIN platforms pl ON p.platform_id = pl.id
+    WHERE a.type = 'crypto' AND p.quantity > 0
+    ORDER BY crypto_type, value_usd DESC
+");
+
+$all_crypto_type_assets = $stmt->fetchAll();
+
+// Группируем активы по типам криптовалют
+$crypto_type_assets_grouped = [];
+foreach ($all_crypto_type_assets as $asset) {
+    $crypto_type = $asset['crypto_type'];
+    
+    // Пропускаем major (BTC и ETH) - они уже отображаются отдельно
+    if ($crypto_type === 'major') continue;
+    
+    $display_name = $crypto_type === 'altcoins' ? 'Альткоины' : 'Стейблкоины';
+    
+    if (!isset($crypto_type_assets_grouped[$crypto_type])) {
+        $crypto_type_assets_grouped[$crypto_type] = [
+            'type' => $crypto_type,
+            'display_name' => $display_name,
+            'assets' => [],
+            'total_value_usd' => 0
+        ];
+    }
+    
+    $crypto_type_assets_grouped[$crypto_type]['assets'][] = [
+        'symbol' => $asset['symbol'],
+        'asset_name' => $asset['asset_name'],
+        'asset_type' => $asset['asset_type'],
+        'quantity' => $asset['quantity'],
+        'average_buy_price' => $asset['average_buy_price'],
+        'currency_code' => $asset['currency_code'],
+        'platform_name' => $asset['platform_name'],
+        'platform_id' => $asset['platform_id'],
+        'value_usd' => $asset['value_usd']
+    ];
+    
+    $crypto_type_assets_grouped[$crypto_type]['total_value_usd'] += $asset['value_usd'];
+}
+
+// Сортируем
+uasort($crypto_type_assets_grouped, function($a, $b) {
+    return $b['total_value_usd'] <=> $a['total_value_usd'];
+});
+
+// Передаем данные в JavaScript
+$crypto_type_assets_json = json_encode($crypto_type_assets_grouped);
+
+// ============================================================================
+// ПОЛУЧЕНИЕ АКТИВОВ ПО СЕКТОРАМ (для модального окна)
+// ============================================================================
+
+// Получаем все активы с детализацией по секторам
+$stmt = $pdo->query("
+    SELECT 
+        COALESCE(a.sector, 'Другое') as sector_name,
+        a.id as asset_id,
+        a.symbol,
+        a.name as asset_name,
+        a.type as asset_type,
+        a.currency_code,
+        p.quantity,
+        p.average_buy_price,
+        pl.name as platform_name,
+        pl.id as platform_id,
+        CASE 
+            WHEN a.symbol = 'RUB' THEN p.quantity / " . $usd_rub_rate . "
+            WHEN a.symbol IN ('USDT', 'USDC', 'USD') THEN p.quantity
+            ELSE p.quantity * COALESCE(p.average_buy_price, 0)
+        END as value_usd
+    FROM portfolio p
+    JOIN assets a ON p.asset_id = a.id
+    JOIN platforms pl ON p.platform_id = pl.id
+    WHERE a.type IN ('stock', 'etf') 
+        AND (a.currency_code = 'USD' OR a.symbol LIKE '%.US')
+        AND p.quantity > 0
+    ORDER BY sector_name, value_usd DESC
+");
+
+$all_sector_assets = $stmt->fetchAll();
+
+// Группируем активы по секторам
+$sector_assets_grouped = [];
+foreach ($all_sector_assets as $asset) {
+    $sector_name = $asset['sector_name'];
+    
+    // Переводим название сектора для отображения
+    $display_sector_name = translateSector($sector_name);
+    
+    if (!isset($sector_assets_grouped[$sector_name])) {
+        $sector_assets_grouped[$sector_name] = [
+            'sector_name' => $sector_name,
+            'display_name' => $display_sector_name,
+            'assets' => [],
+            'total_value_usd' => 0
+        ];
+    }
+    
+    $sector_assets_grouped[$sector_name]['assets'][] = [
+        'symbol' => $asset['symbol'],
+        'asset_name' => $asset['asset_name'],
+        'asset_type' => $asset['asset_type'],
+        'quantity' => $asset['quantity'],
+        'average_buy_price' => $asset['average_buy_price'],
+        'currency_code' => $asset['currency_code'],
+        'platform_name' => $asset['platform_name'],
+        'platform_id' => $asset['platform_id'],
+        'value_usd' => $asset['value_usd']
+    ];
+    
+    $sector_assets_grouped[$sector_name]['total_value_usd'] += $asset['value_usd'];
+}
+
+// Сортируем сектора по общей стоимости
+uasort($sector_assets_grouped, function($a, $b) {
+    return $b['total_value_usd'] <=> $a['total_value_usd'];
+});
+
+// Передаем данные в JavaScript
+$sector_assets_json = json_encode($sector_assets_grouped);
+
+// ============================================================================
 // ПОЛУЧЕНИЕ АКТИВОВ ПО СЕТЯМ ДЛЯ МОДАЛЬНОГО ОКНА (исправленная версия)
 // ============================================================================
 
@@ -201,10 +350,10 @@ uasort($network_assets_grouped, function($a, $b) {
 $network_assets_json = json_encode($network_assets_grouped);
 
 // ============================================================================
-// ПОЛУЧЕНИЕ АКТИВОВ ПО ПЛОЩАДКЕ
+// ПОЛУЧЕНИЕ АКТИВОВ ПО ПЛОЩАДКЕ (для модального окна)
 // ============================================================================
 
-// Получаем все активы с группировкой по площадкам для модального окна
+// Получаем все активы с детализацией по площадкам для модального окна
 $stmt = $pdo->query("
     SELECT 
         p.id as platform_id,
@@ -219,7 +368,7 @@ $stmt = $pdo->query("
         pl.currency_code,
         CASE 
             WHEN a.symbol = 'RUB' THEN pl.quantity / " . $usd_rub_rate . "
-            WHEN a.symbol IN ('USDT', 'USD') THEN pl.quantity
+            WHEN a.symbol IN ('USDT', 'USDC', 'USD') THEN pl.quantity
             ELSE pl.quantity * COALESCE(pl.average_buy_price, 0)
         END as value_usd
     FROM portfolio pl
@@ -284,7 +433,7 @@ $networks_json = json_encode($networks_db);
 // ПОЛУЧЕНИЕ РАСПРЕДЕЛЕНИЯ ПО ПЛОЩАДКАМ
 // ============================================================================
 
-// Получаем распределение по площадкам (исправленный запрос)
+// Получаем распределение по площадкам (только с активами)
 $stmt = $pdo->query("
     SELECT 
         p.id as platform_id,
@@ -294,8 +443,8 @@ $stmt = $pdo->query("
             CASE 
                 -- RUB конвертируем в USD
                 WHEN a.symbol = 'RUB' THEN pl.quantity / " . $usd_rub_rate . "
-                -- USDT и USD уже в USD (или эквиваленте)
-                WHEN a.symbol IN ('USDT', 'USD') THEN pl.quantity
+                -- USD, USDT и USDC считаем как 1:1 (одинаковая стоимость)
+                WHEN a.symbol IN ('USD', 'USDT', 'USDC') THEN pl.quantity
                 -- Для остальных активов используем среднюю цену покупки
                 WHEN pl.average_buy_price IS NOT NULL AND pl.average_buy_price > 0 THEN
                     CASE
@@ -311,8 +460,6 @@ $stmt = $pdo->query("
                              ORDER BY date DESC LIMIT 1)
                         ELSE pl.quantity * pl.average_buy_price
                     END
-                -- Для стейблкоинов (USDT, USDC) уже посчитали выше
-                WHEN a.symbol IN ('USDT', 'USDC') THEN pl.quantity
                 -- Для криптовалют без средней цены пытаемся получить цену из trades
                 WHEN a.type = 'crypto' THEN
                     COALESCE(
@@ -326,10 +473,11 @@ $stmt = $pdo->query("
             END
         ), 0) as total_value_usd
     FROM platforms p
-    LEFT JOIN portfolio pl ON p.id = pl.platform_id AND pl.quantity > 0
-    LEFT JOIN assets a ON pl.asset_id = a.id
+    INNER JOIN portfolio pl ON p.id = pl.platform_id AND pl.quantity > 0
+    INNER JOIN assets a ON pl.asset_id = a.id
     WHERE p.is_active = 1
     GROUP BY p.id, p.name, p.type
+    HAVING total_value_usd > 0
     ORDER BY total_value_usd DESC
 ");
 $platform_distribution = $stmt->fetchAll();
@@ -475,35 +623,54 @@ $stmt = $pdo->query("
 ");
 $portfolio_assets = $stmt->fetchAll();
 
+// Повторяем цикл с отладкой
 $rub_amount = 0;
 $usdt_amount = 0;
+$usd_amount = 0;
+$eur_amount = 0;
 $investments_value = 0;
+$liquidity_value = 0;  // ← ДОБАВЬТЕ ЭТУ СТРОКУ
+
+$debug_log = [];
 
 foreach ($portfolio_assets as $asset) {
+    $value = 0;
+    
     switch ($asset['symbol']) {
         case 'RUB':
-            $rub_amount += $asset['quantity']; // СУММИРУЕМ все RUB
+            $rub_amount += $asset['quantity'];
+            $value = $asset['quantity'] / $usd_rub_rate;
+            $liquidity_value += $value;  // ← Добавляем в ликвидность
             break;
         case 'USDT':
-            $usdt_amount += $asset['quantity']; // СУММИРУЕМ все USDT
+            $usdt_amount += $asset['quantity'];
+            $value = $asset['quantity'];
+            $liquidity_value += $value;  // ← Добавляем в ликвидность
+            break;
+        case 'USD':
+            $usd_amount += $asset['quantity'];
+            $value = $asset['quantity'];
+            $liquidity_value += $value;  // ← Добавляем в ликвидность
+            break;
+        case 'EUR':
+            $eur_amount += $asset['quantity'];
+            $value = $asset['quantity'];
+            $liquidity_value += $value;  // ← Добавляем в ликвидность
             break;
         default:
-            // Для остальных активов используем среднюю цену покупки * количество
             if ($asset['average_buy_price'] > 0) {
-                $investments_value += $asset['quantity'] * $asset['average_buy_price'];
+                $value = $asset['quantity'] * $asset['average_buy_price'];
+                $investments_value += $value;  // ← ТОЛЬКО СЮДА
             }
             break;
     }
 }
 
+// Итоговая стоимость
+$total_usd = $liquidity_value + $investments_value;
+
 // Конвертируем RUB в USD по текущему курсу
 $rub_in_usd = $rub_amount / $usd_rub_rate;
-
-// Свободная ликвидность = RUB в USD + USDT
-$liquidity_value = $rub_in_usd + $usdt_amount;
-
-// Общая стоимость портфеля в USD
-$total_usd = $liquidity_value + $investments_value;
 
 // Конвертируем в рубли по актуальному курсу
 $total_rub = $total_usd * $usd_rub_rate;
@@ -620,15 +787,15 @@ $stmt = $pdo->query("
         a.name,
         a.type,
         SUM(p.quantity) as total_quantity,
-        -- Исправленный расчет средневзвешенной цены
+        -- Расчет средневзвешенной цены
         CASE 
-            WHEN a.symbol = 'USDT' THEN (
-                SELECT CASE 
-                    WHEN SUM(t.quantity) > 0 THEN SUM(t.quantity * t.price) / SUM(t.quantity)
-                    ELSE 1 
-                END
+            WHEN a.symbol IN ('USDT', 'USDC') THEN (
+                SELECT COALESCE(SUM(quantity * price) / NULLIF(SUM(quantity), 0), 1)
                 FROM trades t
-                WHERE t.asset_id = a.id AND t.operation_type = 'buy'
+                WHERE t.asset_id IN (
+                    SELECT id FROM assets WHERE symbol IN ('USD', 'USDT', 'USDC')
+                )
+                AND t.operation_type = 'buy'
             )
             ELSE SUM(p.quantity * COALESCE(p.average_buy_price, 0)) / NULLIF(SUM(p.quantity), 0)
         END as avg_price,
@@ -637,7 +804,7 @@ $stmt = $pdo->query("
     FROM portfolio p
     JOIN assets a ON p.asset_id = a.id
     WHERE p.quantity > 0
-    GROUP BY a.id, a.symbol, a.name, a.type, a.currency_code
+    GROUP BY a.id, a.symbol, a.name, a.type, a.currency_code  -- ← ДОБАВЬТЕ ВСЕ ПОЛЯ ИЗ SELECT
     ORDER BY SUM(p.quantity) * COALESCE(
         (SELECT rate FROM exchange_rates 
          WHERE from_currency = a.currency_code 
@@ -859,22 +1026,68 @@ $total_portfolio_value = $total_portfolio;
 // ПОЛУЧЕНИЕ ДАННЫХ ДЛЯ ГРАФИКОВ
 // ============================================================================
 
+// Функция для перевода названий секторов
+function translateSector($sectorName) {
+    $translations = [
+        'Technology' => 'Технологии',
+        'Healthcare' => 'Здравоохранение',
+        'Financial' => 'Финансы',
+        'Financial Services' => 'Финансовые услуги',
+        'Energy' => 'Энергетика',
+        'Consumer Cyclical' => 'Потребительский сектор',
+        'Consumer Defensive' => 'Защитный сектор',
+        'Consumer Goods' => 'Товары народного потребления',
+        'Industrials' => 'Промышленность',
+        'Communication Services' => 'Связь и медиа',
+        'Utilities' => 'Коммунальные услуги',
+        'Real Estate' => 'Недвижимость',
+        'Basic Materials' => 'Сырьевые материалы',
+        'Materials' => 'Материалы',
+        'Другое' => 'Другое'
+    ];
+    
+    return $translations[$sectorName] ?? $sectorName;
+}
+
+// Получаем распределение по секторам для иностранных акций
 $stmt = $pdo->query("
     SELECT 
-        sector_name,
-        percentage
-    FROM stock_sectors_en 
-    ORDER BY percentage DESC
+        COALESCE(a.sector, 'Другое') as sector_name,
+        SUM(p.quantity * COALESCE(p.average_buy_price, 0)) as total_value
+    FROM portfolio p
+    JOIN assets a ON p.asset_id = a.id
+    WHERE a.type IN ('stock', 'etf') 
+        AND (a.currency_code = 'USD' OR a.symbol LIKE '%.US')
+        AND p.quantity > 0
+    GROUP BY a.sector
+    ORDER BY total_value DESC
 ");
-$en_sectors = $stmt->fetchAll();
 
-$has_en_data = false;
-foreach ($en_sectors as $sector) {
-    if ($sector['percentage'] > 0) {
-        $has_en_data = true;
-        break;
+$sector_data = $stmt->fetchAll();
+$total = 0;
+$en_sectors = [];
+
+// Сначала считаем общую сумму
+foreach ($sector_data as $row) {
+    $total += $row['total_value'];
+}
+
+// Затем рассчитываем проценты и сохраняем стоимость
+foreach ($sector_data as $row) {
+    if ($total > 0) {
+        $percentage = round(($row['total_value'] / $total) * 100, 2);
+        if ($percentage > 0) {
+            $en_sectors[] = [
+                'original_name' => $row['sector_name'],  // <-- СОХРАНЯЕМ ОРИГИНАЛ
+                'sector_name' => translateSector($row['sector_name']), // <-- ПЕРЕВЕДЕННОЕ
+                'percentage' => $percentage,
+                'value_usd' => $row['total_value']
+            ];
+        }
     }
 }
+
+$has_en_data = !empty($en_sectors);
 if (!$has_en_data) {
     $en_sectors = [];
 }
@@ -950,10 +1163,35 @@ function addTrade($pdo, $type, $platform_id, $from_platform_id, $asset_id, $quan
         $trade_id = $pdo->lastInsertId();
         
         if ($type == 'buy') {
+            // Получаем символ актива для коррекции цены USDT/USDC
+            $stmt = $pdo->prepare("SELECT symbol FROM assets WHERE id = ?");
+            $stmt->execute([$asset_id]);
+            $asset_info = $stmt->fetch();
+            $symbol = $asset_info['symbol'];
+
+            // Корректируем цену для USDT и USDC, чтобы она равнялась средневзвешенной цене USD
+            if ($symbol == 'USDT' || $symbol == 'USDC') {
+                // Получаем средневзвешенную цену из всех долларовых активов
+                $stmt = $pdo->prepare("
+                    SELECT COALESCE(SUM(quantity * price) / NULLIF(SUM(quantity), 0), 1) as usd_avg_price
+                    FROM trades 
+                    WHERE asset_id IN (
+                        SELECT id FROM assets WHERE symbol IN ('USD', 'USDT', 'USDC')
+                    )
+                    AND operation_type = 'buy'
+                ");
+                $stmt->execute();
+                $usd_price = $stmt->fetch();
+                
+                if ($usd_price['usd_avg_price'] > 0) {
+                    $price = $usd_price['usd_avg_price'];
+                }
+            }
+
             // ============================================================================
             // 1. СПИСЫВАЕМ СРЕДСТВА (валюту, которой оплачиваем)
             // ============================================================================
-            
+
             // Находим актив для оплаты
             $stmt = $pdo->prepare("
                 SELECT id FROM assets 
@@ -1277,10 +1515,350 @@ function addTransfer($pdo, $from_platform_id, $to_platform_id, $asset_id, $quant
 }
 
 // ============================================================================
+// ФУНКЦИИ ДЛЯ РАБОТЫ С КАТЕГОРИЯМИ РАСХОДОВ
+// ============================================================================
+
+function addExpenseCategory($pdo, $name, $name_ru, $icon, $color) {
+    try {
+        // Проверяем существование
+        $check = $pdo->prepare("SELECT id FROM expense_categories WHERE name = ?");
+        $check->execute([$name]);
+        $existing = $check->fetch();
+        
+        if ($existing) {
+            return ['success' => false, 'message' => 'Категория с таким названием уже существует'];
+        }
+        
+        $stmt = $pdo->prepare("
+            INSERT INTO expense_categories (name, name_ru, icon, color, sort_order)
+            VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM expense_categories))
+        ");
+        $stmt->execute([$name, $name_ru, $icon, $color]);
+        
+        return [
+            'success' => true, 
+            'message' => 'Категория добавлена',
+            'category_id' => $pdo->lastInsertId()
+        ];
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => 'Ошибка при добавлении категории: ' . $e->getMessage()];
+    }
+}
+
+function getExpenseCategories($pdo, $include_inactive = false) {
+    try {
+        $sql = "SELECT * FROM expense_categories";
+        if (!$include_inactive) {
+            $sql .= " WHERE is_active = 1";
+        }
+        $sql .= " ORDER BY sort_order, name_ru";
+        
+        $stmt = $pdo->query($sql);
+        return $stmt->fetchAll();
+    } catch (Exception $e) {
+        return [];
+    }
+}
+
+function updateExpenseCategory($pdo, $id, $data) {
+    try {
+        $fields = [];
+        $params = [];
+        
+        if (isset($data['name'])) {
+            $fields[] = "name = ?";
+            $params[] = $data['name'];
+        }
+        if (isset($data['name_ru'])) {
+            $fields[] = "name_ru = ?";
+            $params[] = $data['name_ru'];
+        }
+        if (isset($data['icon'])) {
+            $fields[] = "icon = ?";
+            $params[] = $data['icon'];
+        }
+        if (isset($data['color'])) {
+            $fields[] = "color = ?";
+            $params[] = $data['color'];
+        }
+        if (isset($data['is_active'])) {
+            $fields[] = "is_active = ?";
+            $params[] = $data['is_active'];
+        }
+        if (isset($data['sort_order'])) {
+            $fields[] = "sort_order = ?";
+            $params[] = $data['sort_order'];
+        }
+        
+        if (empty($fields)) {
+            return ['success' => false, 'message' => 'Нет данных для обновления'];
+        }
+        
+        $params[] = $id;
+        $sql = "UPDATE expense_categories SET " . implode(', ', $fields) . " WHERE id = ?";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        
+        return ['success' => true, 'message' => 'Категория обновлена'];
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => 'Ошибка при обновлении: ' . $e->getMessage()];
+    }
+}
+
+function deleteExpenseCategory($pdo, $id) {
+    try {
+        // Проверяем, есть ли расходы в этой категории
+        $check = $pdo->prepare("SELECT COUNT(*) as count FROM expenses WHERE category_id = ?");
+        $check->execute([$id]);
+        $result = $check->fetch();
+        
+        if ($result['count'] > 0) {
+            // Если есть расходы, просто деактивируем категорию
+            $stmt = $pdo->prepare("UPDATE expense_categories SET is_active = 0 WHERE id = ?");
+            $stmt->execute([$id]);
+            return ['success' => true, 'message' => 'Категория деактивирована (в ней есть расходы)'];
+        } else {
+            // Если расходов нет, удаляем
+            $stmt = $pdo->prepare("DELETE FROM expense_categories WHERE id = ?");
+            $stmt->execute([$id]);
+            return ['success' => true, 'message' => 'Категория удалена'];
+        }
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => 'Ошибка при удалении: ' . $e->getMessage()];
+    }
+}
+
+// ============================================================================
+// ФУНКЦИИ ДЛЯ РАБОТЫ С РАСХОДАМИ
+// ============================================================================
+
+function addExpense($pdo, $amount, $currency_code, $category_id, $description, $date) {
+    try {
+        $stmt = $pdo->prepare("
+            INSERT INTO expenses (amount, currency_code, category_id, description, expense_date)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([$amount, $currency_code, $category_id, $description, $date]);
+        
+        return ['success' => true, 'message' => 'Расход успешно добавлен', 'id' => $pdo->lastInsertId()];
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => 'Ошибка при добавлении расхода: ' . $e->getMessage()];
+    }
+}
+
+function getExpenses($pdo, $limit = 10, $offset = 0, $category_id = null, $date_from = null, $date_to = null) {
+    try {
+        $sql = "
+            SELECT e.*, c.name, c.name_ru, c.icon, c.color
+            FROM expenses e
+            LEFT JOIN expense_categories c ON e.category_id = c.id
+            WHERE 1=1
+        ";
+        $params = [];
+        
+        if ($category_id) {
+            $sql .= " AND e.category_id = ?";
+            $params[] = $category_id;
+        }
+        
+        if ($date_from) {
+            $sql .= " AND e.expense_date >= ?";
+            $params[] = $date_from;
+        }
+        
+        if ($date_to) {
+            $sql .= " AND e.expense_date <= ?";
+            $params[] = $date_to;
+        }
+        
+        $sql .= " ORDER BY e.expense_date DESC, e.created_at DESC LIMIT ? OFFSET ?";
+        $params[] = $limit;
+        $params[] = $offset;
+        
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $expenses = $stmt->fetchAll();
+        
+        // Получаем общую сумму
+        $sql_total = "SELECT SUM(amount) as total FROM expenses WHERE 1=1";
+        $params_total = [];
+        
+        if ($category_id) {
+            $sql_total .= " AND category_id = ?";
+            $params_total[] = $category_id;
+        }
+        
+        if ($date_from) {
+            $sql_total .= " AND expense_date >= ?";
+            $params_total[] = $date_from;
+        }
+        
+        if ($date_to) {
+            $sql_total .= " AND expense_date <= ?";
+            $params_total[] = $date_to;
+        }
+        
+        $stmt_total = $pdo->prepare($sql_total);
+        $stmt_total->execute($params_total);
+        $total = $stmt_total->fetch();
+        
+        // Получаем статистику по категориям
+        $sql_stats = "
+            SELECT 
+                e.category_id,
+                c.name,
+                c.name_ru,
+                c.icon,
+                c.color,
+                SUM(e.amount) as total_amount,
+                COUNT(*) as count
+            FROM expenses e
+            LEFT JOIN expense_categories c ON e.category_id = c.id
+            WHERE 1=1
+        ";
+        $params_stats = [];
+        
+        if ($date_from) {
+            $sql_stats .= " AND e.expense_date >= ?";
+            $params_stats[] = $date_from;
+        }
+        
+        if ($date_to) {
+            $sql_stats .= " AND e.expense_date <= ?";
+            $params_stats[] = $date_to;
+        }
+        
+        $sql_stats .= " GROUP BY e.category_id ORDER BY total_amount DESC";
+        
+        $stmt_stats = $pdo->prepare($sql_stats);
+        $stmt_stats->execute($params_stats);
+        $stats = $stmt_stats->fetchAll();
+        
+        return [
+            'success' => true,
+            'expenses' => $expenses,
+            'total' => $total['total'] ?? 0,
+            'stats' => $stats
+        ];
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => $e->getMessage()];
+    }
+}
+
+function deleteExpense($pdo, $expense_id) {
+    try {
+        $stmt = $pdo->prepare("DELETE FROM expenses WHERE id = ?");
+        $stmt->execute([$expense_id]);
+        return ['success' => true, 'message' => 'Расход удален'];
+    } catch (Exception $e) {
+        return ['success' => false, 'message' => 'Ошибка при удалении: ' . $e->getMessage()];
+    }
+}
+
+// ============================================================================
+// ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ИСТОРИИ ПОКУПОК АКТИВА НА ПЛОЩАДКЕ
+// ============================================================================
+
+function getPurchaseHistory($pdo, $asset_id, $platform_id) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT 
+                t.operation_date,
+                t.quantity,
+                t.price,
+                t.price_currency,
+                p.name as platform_name,
+                t.notes
+            FROM trades t
+            JOIN platforms p ON t.platform_id = p.id
+            WHERE t.asset_id = ? 
+                AND t.platform_id = ?
+                AND t.operation_type = 'buy'
+            ORDER BY t.operation_date DESC
+        ");
+        $stmt->execute([$asset_id, $platform_id]);
+        $purchases = $stmt->fetchAll();
+        
+        // Получаем текущий остаток актива на площадке
+        $stmt = $pdo->prepare("
+            SELECT quantity, average_buy_price
+            FROM portfolio
+            WHERE asset_id = ? AND platform_id = ?
+        ");
+        $stmt->execute([$asset_id, $platform_id]);
+        $current = $stmt->fetch();
+        
+        return [
+            'purchases' => $purchases,
+            'current_quantity' => $current ? floatval($current['quantity']) : 0,
+            'avg_buy_price' => $current ? floatval($current['average_buy_price']) : 0
+        ];
+    } catch (Exception $e) {
+        return [
+            'purchases' => [],
+            'current_quantity' => 0,
+            'avg_buy_price' => 0,
+            'error' => $e->getMessage()
+        ];
+    }
+}
+
+// ============================================================================
+// ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ БАЛАНСА АКТИВОВ НА ПЛОЩАДКЕ
+// ============================================================================
+
+function getPlatformBalance($pdo, $platform_id) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT 
+                a.id as asset_id,
+                a.symbol,
+                a.name as asset_name,
+                a.type as asset_type,
+                p.quantity,
+                p.average_buy_price,
+                p.currency_code,
+                CASE 
+                    WHEN a.symbol = 'RUB' THEN p.quantity / (SELECT rate FROM exchange_rates WHERE from_currency = 'USD' AND to_currency = 'RUB' ORDER BY date DESC LIMIT 1)
+                    WHEN a.symbol IN ('USDT', 'USDC', 'USD') THEN p.quantity
+                    ELSE p.quantity * COALESCE(p.average_buy_price, 0)
+                END as value_usd
+            FROM portfolio p
+            JOIN assets a ON p.asset_id = a.id
+            WHERE p.platform_id = ? AND p.quantity > 0
+            ORDER BY value_usd DESC
+        ");
+        $stmt->execute([$platform_id]);
+        $assets = $stmt->fetchAll();
+        
+        // Рассчитываем общую стоимость
+        $total_value_usd = array_sum(array_column($assets, 'value_usd'));
+        
+        return [
+            'success' => true,
+            'assets' => $assets,
+            'total_value_usd' => $total_value_usd,
+            'total_value_rub' => $total_value_usd * (isset($GLOBALS['usd_rub_rate']) ? $GLOBALS['usd_rub_rate'] : 92.50)
+        ];
+    } catch (Exception $e) {
+        return [
+            'success' => false,
+            'error' => $e->getMessage(),
+            'assets' => [],
+            'total_value_usd' => 0,
+            'total_value_rub' => 0
+        ];
+    }
+}
+
+// ============================================================================
 // ОБРАБОТКА POST ЗАПРОСОВ
 // ============================================================================
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Очищаем буфер вывода перед отправкой JSON
+    if (ob_get_length()) ob_clean();
+
     $response = ['success' => false, 'message' => ''];
     
     if (isset($_POST['action'])) {
@@ -1432,38 +2010,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
             case 'add_asset':
             case 'add_asset_full':
-                $symbol = strtoupper(trim($_POST['symbol']));
-                $name = trim($_POST['name']);
+                $symbol = $_POST['symbol'] ?? '';
+                $name = $_POST['name'] ?? '';
                 $type = $_POST['type'] ?? 'other';
+                $currency_code = $_POST['currency_code'] ?? null;
+                $sector = $_POST['sector'] ?? null;
                 
                 if (empty($symbol) || empty($name)) {
-                    $response['message'] = 'Символ и название актива обязательны';
+                    echo json_encode(['success' => false, 'message' => 'Символ и название обязательны']);
+                    break;
+                }
+                
+                // Проверяем, не существует ли уже такой актив
+                $check = $pdo->prepare("SELECT id FROM assets WHERE symbol = ?");
+                $check->execute([$symbol]);
+                $existing = $check->fetch();
+                
+                if ($existing) {
+                    echo json_encode(['success' => false, 'message' => 'Актив с таким символом уже существует']);
                     break;
                 }
                 
                 try {
-                    $check = $pdo->prepare("SELECT id FROM assets WHERE symbol = ?");
-                    $check->execute([$symbol]);
-                    $existing = $check->fetch();
+                    $stmt = $pdo->prepare("
+                        INSERT INTO assets (symbol, name, type, currency_code, sector, created_at) 
+                        VALUES (?, ?, ?, ?, ?, NOW())
+                    ");
+                    $stmt->execute([$symbol, $name, $type, $currency_code, $sector]);
                     
-                    if ($existing) {
-                        $response['success'] = true;
-                        $response['message'] = 'Актив уже существует';
-                        $response['asset_id'] = $existing['id'];
-                    } else {
-                        $stmt = $pdo->prepare("
-                            INSERT INTO assets (symbol, name, type, is_active) 
-                            VALUES (?, ?, ?, 1)
-                        ");
-                        $stmt->execute([$symbol, $name, $type]);
-                        
-                        $response['success'] = true;
-                        $response['message'] = 'Актив успешно добавлен';
-                        $response['asset_id'] = $pdo->lastInsertId();
-                    }
-                } catch (Exception $e) {
-                    $response['success'] = false;
-                    $response['message'] = 'Ошибка при добавлении актива: ' . $e->getMessage();                    
+                    $asset_id = $pdo->lastInsertId();
+                    
+                    // Очищаем буфер и отправляем JSON
+                    if (ob_get_length()) ob_clean();
+                    
+                    echo json_encode([
+                        'success' => true, 
+                        'message' => 'Актив успешно добавлен',
+                        'asset_id' => $asset_id
+                    ]);
+                    exit; // ВАЖНО: завершаем выполнение скрипта
+                    
+                } catch (PDOException $e) {
+                    if (ob_get_length()) ob_clean();
+                    echo json_encode(['success' => false, 'message' => 'Ошибка БД: ' . $e->getMessage()]);
+                    exit; // ВАЖНО: завершаем выполнение скрипта
                 }
                 break;
             case 'save_theme':
@@ -1832,6 +2422,127 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $response['success'] = false;
                     $response['message'] = 'Ошибка при добавлении сети: ' . $e->getMessage();                    
                 }
+                break;
+            case 'get_purchase_history':
+                $asset_id = $_POST['asset_id'] ?? 0;
+                $platform_id = $_POST['platform_id'] ?? 0;
+                
+                if (!$asset_id || !$platform_id) {
+                    $response = ['success' => false, 'message' => 'Не указан актив или площадка'];
+                } else {
+                    $history = getPurchaseHistory($pdo, $asset_id, $platform_id);
+                    $response = [
+                        'success' => true,
+                        'data' => $history
+                    ];
+                }
+                echo json_encode($response);
+                exit;
+                break;
+            case 'get_platform_balance':
+                $platform_id = $_POST['platform_id'] ?? 0;
+                
+                if (!$platform_id) {
+                    $response = ['success' => false, 'message' => 'Не указана площадка'];
+                } else {
+                    $balance = getPlatformBalance($pdo, $platform_id);
+                    $response = $balance;
+                }
+                echo json_encode($response);
+                exit;
+                break;
+            case 'add_expense':
+                $amount = floatval($_POST['amount'] ?? 0);
+                $currency_code = strtoupper($_POST['currency_code'] ?? 'RUB');
+                $category_id = intval($_POST['category_id'] ?? 0);  // ← Используем category_id
+                $description = trim($_POST['description'] ?? '');
+                $date = $_POST['expense_date'] ?? date('Y-m-d');
+                
+                if ($amount <= 0) {
+                    $response = ['success' => false, 'message' => 'Сумма расхода должна быть больше 0'];
+                    break;
+                }
+                
+                if (!$category_id) {
+                    $response = ['success' => false, 'message' => 'Выберите категорию расхода'];
+                    break;
+                }
+                
+                $result = addExpense($pdo, $amount, $currency_code, $category_id, $description, $date);
+                $response = $result;
+                break;
+            case 'get_expenses':
+                $limit = intval($_POST['limit'] ?? 10);
+                $offset = intval($_POST['offset'] ?? 0);
+                $category = $_POST['category'] ?? null;
+                $date_from = $_POST['date_from'] ?? null;
+                $date_to = $_POST['date_to'] ?? null;
+                
+                $result = getExpenses($pdo, $limit, $offset, $category, $date_from, $date_to);
+                $response = $result;
+                break;
+
+            case 'delete_expense':
+                $expense_id = intval($_POST['expense_id'] ?? 0);
+                
+                if (!$expense_id) {
+                    $response = ['success' => false, 'message' => 'ID расхода не указан'];
+                    break;
+                }
+                
+                $result = deleteExpense($pdo, $expense_id);
+                $response = $result;
+                break;
+
+            case 'get_expense_categories':
+                $categories = getExpenseCategories($pdo);
+                $response = ['success' => true, 'categories' => $categories];
+                break;
+            case 'add_expense_category':
+                $name = strtolower(trim($_POST['name'] ?? ''));
+                $name_ru = trim($_POST['name_ru'] ?? '');
+                $icon = $_POST['icon'] ?? 'fas fa-tag';
+                $color = $_POST['color'] ?? '#ff9f4a';
+                
+                if (empty($name) || empty($name_ru)) {
+                    $response = ['success' => false, 'message' => 'Название категории обязательно'];
+                    break;
+                }
+                
+                $result = addExpenseCategory($pdo, $name, $name_ru, $icon, $color);
+                $response = $result;
+                break;
+
+            case 'update_expense_category':
+                $category_id = intval($_POST['category_id'] ?? 0);
+                $data = [];
+                
+                if (isset($_POST['name'])) $data['name'] = strtolower(trim($_POST['name']));
+                if (isset($_POST['name_ru'])) $data['name_ru'] = trim($_POST['name_ru']);
+                if (isset($_POST['icon'])) $data['icon'] = $_POST['icon'];
+                if (isset($_POST['color'])) $data['color'] = $_POST['color'];
+                if (isset($_POST['is_active'])) $data['is_active'] = intval($_POST['is_active']);
+                if (isset($_POST['sort_order'])) $data['sort_order'] = intval($_POST['sort_order']);
+                
+                if (!$category_id) {
+                    $response = ['success' => false, 'message' => 'ID категории не указан'];
+                    break;
+                }
+                
+                $result = updateExpenseCategory($pdo, $category_id, $data);
+                $response = $result;
+                break;
+
+            case 'delete_expense_category':
+                $category_id = intval($_POST['category_id'] ?? 0);
+                
+                if (!$category_id) {
+                    $response = ['success' => false, 'message' => 'ID категории не указан'];
+                    break;
+                }
+                
+                $result = deleteExpenseCategory($pdo, $category_id);
+                $response = $result;
                 break;
         }
     }
@@ -4684,6 +5395,200 @@ body.dark-theme {
     font-size: 18px;
     color: var(--accent-primary, #1a5cff);
 }
+
+/* ============================================================================
+   КНОПКИ СЕКТОРА - АНАЛОГИЧНЫ КНОПКАМ ТИПА АКТИВА
+   ============================================================================ */
+
+.sector-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 5px;
+    padding: 5px;
+}
+
+.sector-option-btn {
+    flex: 1 1 auto;
+    min-width: 80px;
+    padding: 10px 12px;
+    background: #f0f3f7;
+    border: 1px solid #e0e6ed;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #6b7a8f;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.sector-option-btn:hover {
+    background: #e0e6ed;
+    border-color: #ff9f4a;
+    color: #ff9f4a;
+    transform: translateY(-1px);
+}
+
+.sector-option-btn.active {
+    background: #ff9f4a;
+    border-color: #ff9f4a;
+    color: white;
+    box-shadow: 0 4px 8px rgba(255, 159, 74, 0.2);
+}
+
+/* Для темной темы - переопределяем стили, чтобы они были как у asset-type-btn в светлой теме */
+body.dark-theme .sector-option-btn {
+    background: #f0f3f7 !important;
+    border: 1px solid #e0e6ed !important;
+    color: #6b7a8f !important;
+}
+
+body.dark-theme .sector-option-btn:hover {
+    background: #e0e6ed !important;
+    border-color: #ff9f4a !important;
+    color: #ff9f4a !important;
+}
+
+body.dark-theme .sector-option-btn.active {
+    background: #ff9f4a !important;
+    border-color: #ff9f4a !important;
+    color: white !important;
+    box-shadow: 0 4px 8px rgba(255, 159, 74, 0.2) !important;
+}
+
+/* Стили для блока баланса площадки */
+#transferFromPlatformBalance {
+    animation: fadeIn 0.3s ease;
+}
+
+#transferPlatformAssetsList {
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e0 #f0f3f7;
+}
+
+#transferPlatformAssetsList::-webkit-scrollbar {
+    width: 4px;
+}
+
+#transferPlatformAssetsList::-webkit-scrollbar-track {
+    background: var(--bg-tertiary, #f0f3f7);
+    border-radius: 4px;
+}
+
+#transferPlatformAssetsList::-webkit-scrollbar-thumb {
+    background: var(--border-color, #cbd5e0);
+    border-radius: 4px;
+}
+
+#transferPlatformAssetsList::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary, #a0aec0);
+}
+
+.platform-asset-item {
+    transition: all 0.2s ease;
+}
+
+.platform-asset-item:hover {
+    transform: translateX(2px);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Темная тема */
+.dark-theme #transferFromPlatformBalance {
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+}
+
+.dark-theme .platform-asset-item {
+    border-bottom-color: var(--border-color) !important;
+}
+
+.dark-theme .platform-asset-item:hover {
+    background: var(--bg-secondary) !important;
+}
+
+/* Добавляем стрелку между полями (для grid варианта) */
+#transferModal .form-row {
+    position: relative;
+}
+
+#transferModal .form-row::before {
+    content: '→';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 20px;
+    color: var(--accent-primary, #1a5cff);
+    background: white;
+    padding: 4px 8px;
+    border-radius: 50%;
+    z-index: 1;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Для темной темы */
+.dark-theme #transferModal .form-row::before {
+    background: var(--bg-secondary);
+    color: var(--accent-primary);
+}
+
+/* На мобильных скрываем стрелку */
+@media (max-width: 768px) {
+    #transferModal .form-row::before {
+        display: none;
+    }
+}
+
+/* Скрыть популярные площадки во всех модальных окнах
+,
+#depositPopularPlatforms,
+#tradePopularPlatforms,
+#tradeFromPopularPlatforms,
+#limitPopularPlatforms */
+#transferFromPopularPlatforms,
+#transferToPopularPlatforms {
+    display: none !important;
+}
+
+/* Стили для кнопки расходов */
+.operation-type-btn[data-type="expense"] i {
+    transition: transform 0.3s ease;
+}
+
+.operation-type-btn[data-type="expense"]:hover i {
+    transform: scale(1.2) rotate(-5deg);
+}
+
+/* Стили для элементов расходов */
+.expense-item {
+    transition: all 0.2s ease;
+}
+
+.expense-item:hover {
+    transform: translateX(2px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.delete-expense-btn {
+    transition: all 0.2s ease;
+}
+
+.delete-expense-btn:hover {
+    color: #e53e3e !important;
+    transform: scale(1.1);
+}
     </style>
 </head>
 <body class="<?= $current_theme === 'dark' ? 'dark-theme' : '' ?>">
@@ -4720,10 +5625,27 @@ body.dark-theme {
                                 <button type="button" class="asset-type-btn" data-type="other">Другое</button>
                             </div>
                             <input type="hidden" id="newAssetType" value="">
-                            <small style="color: #6b7a8f; display: block; margin-top: 5px;">
-                                <i class="fas fa-info-circle"></i> Выберите тип актива
-                            </small>
                         </div>
+                        
+                        <!-- БЛОК ВЫБОРА СЕКТОРА (с отдельным классом) -->
+                    <div class="form-group" id="sectorSelectGroup" style="display: none;">
+                        <label><i class="fas fa-chart-line"></i> Сектор *</label>
+                        <div class="sector-buttons" id="sectorButtons">
+                            <?php
+                            $stmt = $pdo->query("SELECT name_ru, name FROM sectors WHERE type IN ('stock', 'etf') AND is_active = 1 ORDER BY name_ru");
+                            $sectors_list = $stmt->fetchAll();
+                            foreach ($sectors_list as $sector):
+                            ?>
+                            <button type="button" class="sector-option-btn" data-sector="<?= htmlspecialchars($sector['name']) ?>">
+                                <?= htmlspecialchars($sector['name_ru']) ?>
+                            </button>
+                            <?php endforeach; ?>
+                        </div>
+                        <input type="hidden" id="newAssetSector" value="">
+                        <small style="color: #6b7a8f; display: block; margin-top: 5px;">
+                            <i class="fas fa-info-circle"></i> Выберите сектор для акции/ETF
+                        </small>
+                    </div>
                     </form>
                 </div>
                 <div class="modal-footer">
@@ -5056,6 +5978,36 @@ body.dark-theme {
                             </div>
                         </div>
 
+                        <!-- Блок истории покупок для продажи -->
+                        <div id="sellPurchaseHistory" style="display: none; margin-top: 15px;">
+                            <div style="background: var(--bg-tertiary, #f8fafd); border-radius: 12px; padding: 12px; margin-bottom: 15px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <span style="font-weight: 600; font-size: 13px;">
+                                        <i class="fas fa-history"></i> История покупок
+                                    </span>
+                                    <span id="sellCurrentBalance" style="font-size: 12px; color: #00a86b;"></span>
+                                </div>
+                                
+                                <div id="sellPurchaseList" style="max-height: 200px; overflow-y: auto;">
+                                    <div style="text-align: center; padding: 20px; color: #6b7a8f;">
+                                        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+                                    </div>
+                                </div>
+                                
+                                <div id="sellQuickActions" style="margin-top: 12px; display: none;">
+                                    <div style="border-top: 1px solid var(--border-color, #e0e6ed); margin: 10px 0;"></div>
+                                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                        <button type="button" id="sellQuickFillAllBtn" class="quick-platform-btn" style="background: #00a86b; color: white;">
+                                            <i class="fas fa-arrow-up"></i> Продать всё
+                                        </button>
+                                        <button type="button" id="sellQuickFillAvgBtn" class="quick-platform-btn" style="background: #ff9f4a; color: white;">
+                                            <i class="fas fa-chart-line"></i> По средней цене
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="form-group">
                             <label><i class="fas fa-tag"></i> Цена за ед. *</label>
                             <div class="currency-input-group">
@@ -5135,50 +6087,78 @@ body.dark-theme {
                 </div>
                 <div class="modal-body">
                     <form id="transferForm">
-                        <div class="form-group">
-                            <label><i class="fas fa-arrow-right"></i> Откуда *</label>
-                            <button type="button" class="platform-select-btn" id="selectFromPlatformBtn" style="width: 100%; justify-content: space-between; margin-bottom: 10px;">
-                                <span id="selectedFromPlatformDisplay">Выбрать площадку</span>
-                                <i class="fas fa-chevron-down"></i>
-                            </button>
-                            
-                            <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="transferFromPopularPlatforms">
-                                <?php
-                                $popular_platforms = array_slice($platforms, 0, 5);
-                                foreach ($popular_platforms as $platform): 
-                                ?>
-                                <button type="button" class="quick-platform-btn" onclick="selectFromPlatform('<?= $platform['id'] ?>', '<?= htmlspecialchars($platform['name']) ?>')">
-                                    <?= htmlspecialchars($platform['name']) ?>
+                        <!-- Блок выбора площадок Откуда и Куда в одной строке -->
+                        <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                            <div class="form-group">
+                                <label>Откуда *</label>
+                                <button type="button" class="platform-select-btn" id="selectFromPlatformBtn" style="width: 100%; justify-content: space-between; margin-bottom: 10px;">
+                                    <span id="selectedFromPlatformDisplay">Выбрать площадку</span>
+                                    <i class="fas fa-chevron-down"></i>
                                 </button>
-                                <?php endforeach; ?>
+                                
+                                <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="transferFromPopularPlatforms">
+                                    <?php
+                                    $popular_platforms = array_slice($platforms, 0, 5);
+                                    foreach ($popular_platforms as $platform): 
+                                    ?>
+                                    <button type="button" class="quick-platform-btn" onclick="selectFromPlatform('<?= $platform['id'] ?>', '<?= htmlspecialchars($platform['name']) ?>')">
+                                        <?= htmlspecialchars($platform['name']) ?>
+                                    </button>
+                                    <?php endforeach; ?>
+                                </div>
+                                
+                                <div id="transferFromPlatformsList" style="max-height: 150px; overflow-y: auto; margin-top: 8px; border: 1px solid #edf2f7; border-radius: 12px; padding: 5px; display: none;"></div>
+                                
+                                <input type="hidden" id="transferFromPlatformId" value="">
                             </div>
-                            
-                            <div id="transferFromPlatformsList" style="max-height: 150px; overflow-y: auto; margin-top: 8px; border: 1px solid #edf2f7; border-radius: 12px; padding: 5px; display: none;"></div>
-                            
-                            <input type="hidden" id="transferFromPlatformId" value="">
+
+                            <div class="form-group">
+                                <label>Куда *</label>
+                                <button type="button" class="platform-select-btn" id="selectToPlatformBtn" style="width: 100%; justify-content: space-between; margin-bottom: 10px;">
+                                    <span id="selectedToPlatformDisplay">Выбрать площадку</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                                
+                                <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="transferToPopularPlatforms">
+                                    <?php
+                                    $popular_platforms = array_slice($platforms, 0, 5);
+                                    foreach ($popular_platforms as $platform): 
+                                    ?>
+                                    <button type="button" class="quick-platform-btn" onclick="selectToPlatform('<?= $platform['id'] ?>', '<?= htmlspecialchars($platform['name']) ?>')">
+                                        <?= htmlspecialchars($platform['name']) ?>
+                                    </button>
+                                    <?php endforeach; ?>
+                                </div>
+                                
+                                <div id="transferToPlatformsList" style="max-height: 150px; overflow-y: auto; margin-top: 8px; border: 1px solid #edf2f7; border-radius: 12px; padding: 5px; display: none;"></div>
+                                
+                                <input type="hidden" id="transferToPlatformId" value="">
+                            </div>
                         </div>
 
-                        <div class="form-group">
-                            <label><i class="fas fa-arrow-left"></i> Куда *</label>
-                            <button type="button" class="platform-select-btn" id="selectToPlatformBtn" style="width: 100%; justify-content: space-between; margin-bottom: 10px;">
-                                <span id="selectedToPlatformDisplay">Выбрать площадку</span>
-                                <i class="fas fa-chevron-down"></i>
-                            </button>
-                            
-                            <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="transferToPopularPlatforms">
-                                <?php
-                                $popular_platforms = array_slice($platforms, 0, 5);
-                                foreach ($popular_platforms as $platform): 
-                                ?>
-                                <button type="button" class="quick-platform-btn" onclick="selectToPlatform('<?= $platform['id'] ?>', '<?= htmlspecialchars($platform['name']) ?>')">
-                                    <?= htmlspecialchars($platform['name']) ?>
-                                </button>
-                                <?php endforeach; ?>
+                        <!-- Блок баланса площадки отправителя -->
+                        <div id="transferFromPlatformBalance" style="display: none; margin-top: 10px; margin-bottom: 15px;">
+                            <div style="background: var(--bg-tertiary, #f8fafd); border-radius: 12px; padding: 12px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <span id="platformBalanceTitle" style="font-weight: 600; font-size: 13px;">
+                                        <i class="fas fa-wallet"></i> Баланс площадки
+                                    </span>
+                                    <span id="transferPlatformTotalValue" style="font-size: 12px; font-weight: 500; color: #ff9f4a;"></span>
+                                </div>
+                                
+                                <div id="transferPlatformAssetsList" style="max-height: 200px; overflow-y: auto;">
+                                    <div style="text-align: center; padding: 15px; color: #6b7a8f;">
+                                        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+                                    </div>
+                                </div>
+                                
+                                <div id="transferPlatformTotal" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color, #e0e6ed); display: none;">
+                                    <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                                        <span>Всего:</span>
+                                        <span id="transferPlatformTotalUsd" style="font-weight: 600;"></span>
+                                    </div>
+                                </div>
                             </div>
-                            
-                            <div id="transferToPlatformsList" style="max-height: 150px; overflow-y: auto; margin-top: 8px; border: 1px solid #edf2f7; border-radius: 12px; padding: 5px; display: none;"></div>
-                            
-                            <input type="hidden" id="transferToPlatformId" value="">
                         </div>
 
                         <div class="form-group">
@@ -5693,6 +6673,236 @@ body.dark-theme {
             </div>
         </div>
 
+        <!-- Модальное окно активов сектора -->
+        <div class="modal-overlay" id="sectorAssetsModal">
+            <div class="modal" style="max-width: 650px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h2 id="sectorAssetsModalTitle">
+                        <i class="fas fa-chart-pie" style="color: #4a9eff;"></i> 
+                        <span id="sectorAssetsName">Активы сектора</span>
+                    </h2>
+                    <button class="modal-close" id="closeSectorAssetsModalBtn">&times;</button>
+                </div>
+                <div class="modal-body" id="sectorAssetsBody" style="max-height: 60vh; overflow-y: auto;">
+                    <div style="text-align: center; padding: 30px; color: #6b7a8f;">
+                        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="closeSectorAssetsModalFooterBtn">Закрыть</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Модальное окно активов по типам криптовалют -->
+        <div class="modal-overlay" id="cryptoTypeModal">
+            <div class="modal" style="max-width: 650px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h2 id="cryptoTypeModalTitle">
+                        <i class="fas fa-coins" style="color: #ff9f4a;"></i> 
+                        <span id="cryptoTypeName">Активы</span>
+                    </h2>
+                    <button class="modal-close" id="closeCryptoTypeModalBtn">&times;</button>
+                </div>
+                <div class="modal-body" id="cryptoTypeBody" style="max-height: 60vh; overflow-y: auto;">
+                    <div style="text-align: center; padding: 30px; color: #6b7a8f;">
+                        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="closeCryptoTypeModalFooterBtn">Закрыть</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Модальное окно расходов -->
+        <div class="modal-overlay" id="expenseModal">
+            <div class="modal" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2><i class="fas fa-receipt" style="color: #ff9f4a;"></i> Добавить расход</h2>
+                    <button class="modal-close" id="closeExpenseModalBtn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="expenseForm">
+                        <div class="form-group">
+                            <label><i class="fas fa-tag"></i> Сумма *</label>
+                            <div class="currency-input-group">
+                                <input type="text" class="form-input" id="expenseAmount" placeholder="0" inputmode="numeric">
+                                <button type="button" class="currency-select-btn" id="selectExpenseCurrencyBtn">
+                                    <span id="selectedExpenseCurrencyDisplay">RUB</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label><i class="fas fa-category"></i> Категория *</label>
+                            <div id="expenseCategoriesList" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px;">
+                                <!-- Категории будут загружены через JavaScript -->
+                            </div>
+                            <!-- ДОБАВЬТЕ ЭТО СКРЫТОЕ ПОЛЕ -->
+                            <input type="hidden" id="expenseCategoryId" value="">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label><i class="fas fa-align-left"></i> Описание</label>
+                            <textarea class="form-input" id="expenseDescription" rows="2" placeholder="Например: продукты, такси, ресторан..."></textarea>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label><i class="far fa-calendar-alt"></i> Дата расхода</label>
+                            <input type="date" class="form-input" id="expenseDate" required>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelExpenseBtn">Отмена</button>
+                    <button class="btn btn-primary" id="confirmExpenseBtn" style="background: #ff9f4a;">
+                        <i class="fas fa-save"></i> Сохранить расход
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Модальное окно просмотра расходов -->
+        <div class="modal-overlay" id="expensesListModal">
+            <div class="modal" style="max-width: 700px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h2><i class="fas fa-chart-line" style="color: #ff9f4a;"></i> Мои расходы</h2>
+                    <button class="modal-close" id="closeExpensesListModalBtn">&times;</button>
+                </div>
+                <div class="modal-body" id="expensesListBody" style="max-height: 60vh; overflow-y: auto;">
+                    <div style="text-align: center; padding: 30px;">
+                        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="closeExpensesListModalFooterBtn">Закрыть</button>
+                    <button class="btn btn-primary" id="addNewExpenseBtn" style="background: #ff9f4a;">
+                        <i class="fas fa-plus-circle"></i> Добавить расход
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Модальное окно добавления категории расходов -->
+        <div class="modal-overlay" id="addExpenseCategoryModal">
+            <div class="modal" style="max-width: 450px;">
+                <div class="modal-header">
+                    <h2><i class="fas fa-plus-circle" style="color: #ff9f4a;"></i> Добавить категорию расходов</h2>
+                    <button class="modal-close" id="closeAddCategoryModalBtn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="addExpenseCategoryForm">
+                        <div class="form-group">
+                            <label><i class="fas fa-tag"></i> Название (англ) *</label>
+                            <input type="text" class="form-input" id="newCategoryName" placeholder="Например: food, transport, shopping" required>
+                            <small style="color: #6b7a8f;">Уникальный идентификатор категории</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label><i class="fas fa-font"></i> Название (рус) *</label>
+                            <input type="text" class="form-input" id="newCategoryNameRu" placeholder="Например: Продукты, Транспорт, Покупки" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label><i class="fas fa-icons"></i> Иконка</label>
+                            <div class="currency-input-group">
+                                <input type="text" class="form-input" id="newCategoryIcon" placeholder="fas fa-tag" value="fas fa-tag">
+                                <button type="button" class="currency-select-btn" id="selectIconBtn" style="width: 80px;">
+                                    <i class="fas fa-search"></i> Выбрать
+                                </button>
+                            </div>
+                            <div id="iconPreview" style="margin-top: 8px; padding: 8px; background: var(--bg-tertiary); border-radius: 8px; text-align: center;">
+                                <i class="fas fa-tag" style="font-size: 24px; color: #ff9f4a;"></i>
+                                <span id="iconPreviewText" style="margin-left: 8px;">fas fa-tag</span>
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label><i class="fas fa-palette"></i> Цвет</label>
+                            <input type="color" class="form-input" id="newCategoryColor" value="#ff9f4a" style="height: 48px; padding: 6px;">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelAddCategoryBtn">Отмена</button>
+                    <button class="btn btn-primary" id="confirmAddCategoryBtn" style="background: #ff9f4a;">
+                        <i class="fas fa-save"></i> Сохранить категорию
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Простое модальное окно выбора иконки (можно расширить) -->
+        <div class="modal-overlay" id="iconSelectModal">
+            <div class="modal" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2><i class="fas fa-icons"></i> Выберите иконку</h2>
+                    <button class="modal-close" id="closeIconModalBtn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <input type="text" class="form-input" id="iconSearch" placeholder="Поиск иконки...">
+                    </div>
+                    <div id="iconsList" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; max-height: 300px; overflow-y: auto;">
+                        <!-- Популярные иконки -->
+                        <div class="icon-option" data-icon="fas fa-utensils" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-utensils" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">food</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-car" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-car" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">transport</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-film" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-film" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">entertainment</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-shopping-bag" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-shopping-bag" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">shopping</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-heartbeat" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-heartbeat" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">health</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-graduation-cap" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-graduation-cap" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">education</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-home" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-home" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">utilities</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-coffee" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-coffee" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">coffee</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-plane" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-plane" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">travel</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-gift" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-gift" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">gift</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-wifi" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-wifi" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">internet</div>
+                        </div>
+                        <div class="icon-option" data-icon="fas fa-mobile-alt" style="padding: 10px; text-align: center; cursor: pointer; border-radius: 8px;">
+                            <i class="fas fa-mobile-alt" style="font-size: 24px;"></i>
+                            <div style="font-size: 10px;">phone</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="closeIconModalFooterBtn">Закрыть</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Шапка сайта с логотипом и кнопками -->
         <div class="site-header">
             <div class="logo-container">
@@ -5719,6 +6929,9 @@ body.dark-theme {
                 <button type="button" class="currency-btn operation-type-btn" data-type="deposit">
                     <i class="fas fa-plus-circle"></i> Пополнить
                 </button>
+                <button type="button" class="operation-type-btn" data-type="expense">
+                    <i class="fas fa-receipt"></i> Расходы
+                </button>
                 <button id="themeToggleBtn" class="theme-toggle-btn">
                     <i class="fas <?= $current_theme === 'dark' ? 'fa-sun' : 'fa-moon' ?>"></i>
                     <span id="themeToggleText"><?= $current_theme === 'dark' ? 'Светлая' : 'Темная' ?></span>
@@ -5734,12 +6947,10 @@ body.dark-theme {
                         <span class="value-label">Текущая стоимость портфеля</span>
                         <div style="display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap;">
                             <div>
-                                <span class="value-amount" id="usdValue">$ <?= number_format($total_usd, 2, '.', ' ') ?></span>
-                            </div>
-                            <div style="color: #6b7a8f; font-size: 24px; font-weight: 300;">/</div>
-                            <div>
+                                <span class="value-amount" id="usdValue"><?= number_format($total_usd, 2, '.', ' ') ?> $</span>
+                                <br />
                                 <span class="value-amount" id="rubValue"><?= number_format($total_rub, 0, '.', ' ') ?> ₽</span>
-                            </div>
+                            </div>  
                         </div>
                     </div>
 
@@ -5747,7 +6958,7 @@ body.dark-theme {
                     <div style="background: <?= $profit_usd >= 0 ? '#e8f5e9' : '#ffe6e6' ?>; padding: 10px 16px; border-radius: 12px; min-width: 200px;">
                         <div style="font-size: 12px; color: <?= $profit_usd >= 0 ? '#2e7d32' : '#c62828' ?>; font-weight: 500; display: flex; align-items: center; gap: 4px;">
                             <i class="fas <?= $profit_icon ?>" style="font-size: 10px;"></i>
-                            ДОХОДНОСТЬ
+                            ДОХОДНОСТЬ 
                         </div>
                         
                         <div style="font-weight: 600; font-size: 18px; color: <?= $profit_usd >= 0 ? '#2e7d32' : '#c62828' ?>;">
@@ -5766,7 +6977,7 @@ body.dark-theme {
                             </div>
                             <div style="text-align: right;">
                                 <div style="font-size: 10px; color: #6b7a8f;">Вложено</div>
-                                <div style="font-weight: 600; font-size: 13px;">$ <?= number_format($total_invested_usd, 2, '.', ' ') ?></div>
+                                <div style="font-weight: 600; font-size: 13px;"><?= number_format($total_invested_usd, 2, '.', ' ') ?> $</div>
                                 <div style="font-size: 10px; color: #6b7a8f;"><?= number_format($total_invested_rub, 0, '.', ' ') ?> ₽</div>
                             </div>
                         </div>
@@ -5774,19 +6985,20 @@ body.dark-theme {
                     
                     <div style="background: #e3f2fd; padding: 10px 16px; border-radius: 12px;">
                         <div style="font-size: 12px; color: #1976d2; font-weight: 500;">РУБЛИ</div>
-                        <div style="font-weight: 600; margin-top: 2px;"><?= number_format($rub_amount_display, 0, '.', ' ') ?> ₽</div>
-                        <div style="font-size: 11px; color: #6b7a8f;">$ <?= number_format($rub_in_usd, 2, '.', ' ') ?></div>
+                        <div style="font-weight: 600; margin-top: 2px;"><?= number_format($rub_in_usd, 2, '.', ' ') ?> $</div>
+                        <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($rub_amount_display, 0, '.', ' ') ?> ₽</div>
                     </div>
                     
                     <div style="background: #e8f5e9; padding: 10px 16px; border-radius: 12px;">
-                        <div style="font-size: 12px; color: #2e7d32; font-weight: 500;">USDT</div>
-                        <div style="font-weight: 600; margin-top: 2px;"><?= number_format($usdt_amount_display, 2, '.', ' ') ?> USDT</div>
-                        <div style="font-size: 11px; color: #6b7a8f;">$ <?= number_format($usdt_amount_display, 2, '.', ' ') ?></div>
+                        <div style="font-size: 12px; color: #2e7d32; font-weight: 500;">ДОЛЛАРЫ</div>
+                        <div style="font-weight: 600; margin-top: 2px;"><?= number_format($usd_amount + $usdt_amount, 2, '.', ' ') ?> $</div>
+                        <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($usd_amount, 2, '.', ' ') ?> USD</div>
+                        <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($usdt_amount, 2, '.', ' ') ?> USDT</div>
                     </div>
                     
                     <div style="background: #fff3e0; padding: 10px 16px; border-radius: 12px;">
                         <div style="font-size: 12px; color: #ed6c02; font-weight: 500;">ИНВЕСТИЦИИ</div>
-                        <div style="font-weight: 600; margin-top: 2px;">$ <?= number_format($investments_value, 2, '.', ' ') ?></div>
+                        <div style="font-weight: 600; margin-top: 2px;"><?= number_format($investments_value, 2, '.', ' ') ?> $</div>
                         <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($investments_rub, 0, '.', ' ') ?> ₽</div>
                     </div>
                 </div>
@@ -6001,16 +7213,44 @@ body.dark-theme {
                     $segments = [];
                     
                     if ($btc_cost > 0) {
-                        $segments[] = ['name' => 'BTC', 'value' => $btc_cost, 'percent' => $btc_percent, 'color' => '#f7931a', 'icon' => 'fab fa-bitcoin'];
+                        $segments[] = [
+                            'name' => 'BTC', 
+                            'value' => $btc_cost, 
+                            'percent' => $btc_percent, 
+                            'color' => '#f7931a', 
+                            'icon' => 'fab fa-bitcoin',
+                            'type' => 'btc'  // добавляем тип для идентификации
+                        ];
                     }
                     if ($eth_cost > 0) {
-                        $segments[] = ['name' => 'ETH', 'value' => $eth_cost, 'percent' => $eth_percent, 'color' => '#627eea', 'icon' => 'fab fa-ethereum'];
+                        $segments[] = [
+                            'name' => 'ETH', 
+                            'value' => $eth_cost, 
+                            'percent' => $eth_percent, 
+                            'color' => '#627eea', 
+                            'icon' => 'fab fa-ethereum',
+                            'type' => 'eth'
+                        ];
                     }
                     if ($altcoins_cost > 0) {
-                        $segments[] = ['name' => 'Altcoins', 'value' => $altcoins_cost, 'percent' => $altcoins_percent, 'color' => '#14b8a6', 'icon' => 'fas fa-chart-line'];
+                        $segments[] = [
+                            'name' => 'Альткоины',  // переводим на русский
+                            'value' => $altcoins_cost, 
+                            'percent' => $altcoins_percent, 
+                            'color' => '#14b8a6', 
+                            'icon' => 'fas fa-chart-line',
+                            'type' => 'altcoins'  // добавляем тип для идентификации
+                        ];
                     }
                     if ($stablecoins_left > 0) {
-                        $segments[] = ['name' => 'Stablecoins', 'value' => $stablecoins_left, 'percent' => $stablecoins_percent, 'color' => '#a5a5a5', 'icon' => 'fas fa-coins'];
+                        $segments[] = [
+                            'name' => 'Стейблкоины',  // переводим на русский
+                            'value' => $stablecoins_left, 
+                            'percent' => $stablecoins_percent, 
+                            'color' => '#a5a5a5', 
+                            'icon' => 'fas fa-coins',
+                            'type' => 'stablecoins'  // добавляем тип для идентификации
+                        ];
                     }
                     
                     foreach ($segments as $index => $segment) {
@@ -6020,8 +7260,25 @@ body.dark-theme {
                     ?>
                     <div class="pie" style="background: conic-gradient(<?= implode(', ', $gradient_parts) ?>);"></div>
                     <div class="chart-legend">
-                        <?php foreach ($segments as $segment): ?>
-                        <div class="legend-item" style="align-items: flex-start;">
+                        <?php foreach ($segments as $segment): 
+                            // Определяем, нужно ли делать элемент кликабельным
+                            $isClickable = ($segment['type'] === 'altcoins' || $segment['type'] === 'stablecoins');
+                            $onclickAttr = '';
+                            $cursorStyle = '';
+                            
+                            if ($isClickable) {
+                                $modalType = $segment['type'];
+                                $modalName = $segment['name'];
+                                $onclickAttr = "onclick=\"openCryptoTypeModal('{$modalType}', '{$modalName}')\"";
+                                $cursorStyle = "cursor: pointer;";
+                            }
+                        ?>
+                        <div class="legend-item" style="align-items: flex-start; <?= $cursorStyle ?>" 
+                            <?= $onclickAttr ?>
+                            <?php if ($isClickable): ?>
+                            onmouseover="this.style.opacity='0.8'" 
+                            onmouseout="this.style.opacity='1'"
+                            <?php endif; ?>>
                             <span class="legend-color" style="width: 12px; height: 12px; background: <?= $segment['color'] ?>; margin-top: 4px;"></span>
                             <span style="flex: 1; display: flex; align-items: center; gap: 6px;">
                                 <i class="<?= $segment['icon'] ?>" style="color: <?= $segment['color'] ?>; width: 16px;"></i>
@@ -6055,6 +7312,13 @@ body.dark-theme {
                     $gradient = [];
                     $current = 0;
                     
+                    // Рассчитываем общую стоимость для фондового EN
+                    $total_en_value = 0;
+                    foreach ($en_sectors as $sector) {
+                        $total_en_value += $sector['value_usd'];
+                    }
+                    
+                    // Формируем градиент на основе процентов
                     foreach ($en_sectors as $index => $sector) {
                         $gradient[] = $colors[$index % count($colors)] . ' ' . $current . '% ' . ($current + $sector['percentage']) . '%';
                         $current += $sector['percentage'];
@@ -6063,15 +7327,26 @@ body.dark-theme {
                     <div class="pie" style="background: conic-gradient(<?= implode(', ', $gradient) ?>);"></div>
                     <div class="chart-legend">
                         <?php foreach ($en_sectors as $index => $sector): ?>
-                        <div class="legend-item" style="align-items: flex-start;">
+                        <div class="legend-item" style="align-items: flex-start; cursor: pointer;" 
+                            onclick="openSectorAssetsModal('<?= htmlspecialchars($sector['original_name'], ENT_QUOTES) ?>', '<?= htmlspecialchars($sector['sector_name'], ENT_QUOTES) ?>')"
+                            onmouseover="this.style.opacity='0.8'" 
+                            onmouseout="this.style.opacity='1'">
                             <span class="legend-color" style="width: 12px; height: 12px; background: <?= $colors[$index % count($colors)] ?>; border-radius: 4px; margin-top: 4px;"></span>
                             <span style="flex: 1;"><?= htmlspecialchars($sector['sector_name']) ?></span>
                             <span class="legend-value" style="text-align: right;">
                                 <div><?= $sector['percentage'] ?>%</div>
-                                <div style="font-size: 11px; color: #6b7a8f; font-weight: normal;">$0</div>
+                                <div style="font-size: 11px; color: #6b7a8f; font-weight: normal;">$<?= number_format($sector['value_usd'], 0, '.', ' ') ?></div>
                             </span>
                         </div>
                         <?php endforeach; ?>
+                        
+                        <!-- БЛОК "ВСЕГО" -->
+                        <div class="legend-item" style="border-top: 1px solid #edf2f7; margin-top: 8px; padding-top: 8px;">
+                            <span style="font-weight: 600;">Всего</span>
+                            <span class="legend-value" style="font-weight: 600; text-align: right;">
+                                $<?= number_format($total_en_value, 0, '.', ' ') ?>
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -6146,9 +7421,10 @@ body.dark-theme {
                                 $avg_price = $asset['avg_price'];
                                 
                                 // Новая логика форматирования средней цены
-                                // Убираем отображение валюты для USDT и крипто
-                                if ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC') {
-                                    // Для USDT и USDC не показываем валюту
+                                // Убираем отображение валюты для USDT, USDC и фиатных валют (USD, RUB, EUR)
+                                if ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC' || 
+                                    $asset['symbol'] == 'USD' || $asset['symbol'] == 'RUB' || $asset['symbol'] == 'EUR') {
+                                    // Для стейблкоинов и фиатных валют не показываем валюту
                                     $avg_price_display = number_format($avg_price, 2, '.', ' ');
                                     $avg_currency = '';
                                 } elseif ($asset['type'] == 'crypto') {
@@ -6581,6 +7857,28 @@ let currentModalContext = {
     mode: null,
     subMode: null
 };
+
+// ============================================================================
+// ФУНКЦИИ ДЛЯ БЛОКИРОВКИ СКРОЛЛА
+// ============================================================================
+
+function disableBodyScroll() {
+    // Сохраняем текущую позицию скролла
+    const scrollY = window.scrollY;
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = '100%';
+    document.body.dataset.scrollPosition = scrollY;
+}
+
+function enableBodyScroll() {
+    const scrollY = document.body.dataset.scrollPosition;
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.width = '';
+    window.scrollTo(0, parseInt(scrollY || '0'));
+    delete document.body.dataset.scrollPosition;
+}
 
 function setModalContext(source, mode, subMode = null) {
     currentModalContext = { source, mode, subMode };
@@ -7064,8 +8362,10 @@ function selectCurrencyFromList(code, name) {
     } else if (context === 'deposit') {
         selectCurrency(code, name);
     } else if (context === 'limit') {
-        // Добавляем обработку для лимитных ордеров
         selectLimitCurrency(code);
+    } else if (context === 'expense') {   // ← ДОБАВЬТЕ ЭТУ СТРОКУ
+        // Для расходов - обновляем отображение валюты
+        document.getElementById('selectedExpenseCurrencyDisplay').textContent = code;
     }
     
     closeCurrencyModal();
@@ -7213,6 +8513,23 @@ function selectTradePlatform(id, name) {
     
     const hiddenInput = document.getElementById('tradePlatformId');
     if (hiddenInput) hiddenInput.value = id;
+    
+    // НОВЫЙ КОД: Если это продажа и актив уже выбран, загружаем историю
+    const operationType = document.getElementById('tradeOperationType').value;
+    const assetId = document.getElementById('tradeAssetId').value;
+    
+    if (operationType === 'sell' && assetId) {
+        loadPurchaseHistoryForSell(assetId, id);
+    } else if (operationType === 'sell') {
+        // Если актив еще не выбран, показываем сообщение
+        const historyBlock = document.getElementById('sellPurchaseHistory');
+        if (historyBlock) {
+            historyBlock.style.display = 'block';
+            document.getElementById('sellPurchaseList').innerHTML = 
+                '<div style="text-align: center; padding: 20px; color: #ff9f4a;"><i class="fas fa-info-circle"></i> Сначала выберите актив</div>';
+            document.getElementById('sellQuickActions').style.display = 'none';
+        }
+    }
 }
 
 function selectTradeFromPlatform(id, name) {
@@ -7262,12 +8579,33 @@ function selectTradeAsset(id, symbol, type) {
     const typeInput = document.getElementById('tradeAssetType');
     if (typeInput) typeInput.value = type || 'other';
     
-    // Пересчитываем итог (количество могло измениться)
+    // Пересчитываем итог
     calculateTradeTotal();
     
     const cryptoSection = document.getElementById('tradeCryptoNetworkSection');
     if (cryptoSection) {
         cryptoSection.style.display = type === 'crypto' ? 'block' : 'none';
+    }
+    
+    // НОВЫЙ КОД: Если это продажа, загружаем историю покупок
+    const operationType = document.getElementById('tradeOperationType').value;
+    const platformId = document.getElementById('tradePlatformId').value;
+    
+    if (operationType === 'sell' && platformId) {
+        loadPurchaseHistoryForSell(id, platformId);
+    } else if (operationType === 'sell') {
+        // Если площадка еще не выбрана, показываем сообщение
+        const historyBlock = document.getElementById('sellPurchaseHistory');
+        if (historyBlock) {
+            historyBlock.style.display = 'block';
+            document.getElementById('sellPurchaseList').innerHTML = 
+                '<div style="text-align: center; padding: 20px; color: #ff9f4a;"><i class="fas fa-info-circle"></i> Сначала выберите площадку</div>';
+            document.getElementById('sellQuickActions').style.display = 'none';
+        }
+    } else {
+        // Если это покупка, скрываем блок истории
+        const historyBlock = document.getElementById('sellPurchaseHistory');
+        if (historyBlock) historyBlock.style.display = 'none';
     }
 }
 
@@ -7326,13 +8664,16 @@ function selectCommissionCurrency(code) {
 
 function selectFromPlatform(id, name) {
     selectedFromPlatform = { id, name };
-    window.currentPlatformMode = 'from'; // Добавляем для отслеживания
+    window.currentPlatformMode = 'from';
     
     const display = document.getElementById('selectedFromPlatformDisplay');
     if (display) display.textContent = name;
     
     const hiddenInput = document.getElementById('transferFromPlatformId');
     if (hiddenInput) hiddenInput.value = id;
+    
+    // НОВЫЙ КОД: Загружаем баланс выбранной площадки
+    loadPlatformBalance(id, name);
 }
 
 function selectToPlatform(id, name) {
@@ -7431,12 +8772,27 @@ function openTradeModal(type) {
         confirmTradeBtnText.textContent = 'Купить';
         document.getElementById('tradeFromPlatformGroup').style.display = 'block';
         setModalContext('buy', null);
+        
+        // Скрываем блок истории покупок при покупке
+        const historyBlock = document.getElementById('sellPurchaseHistory');
+        if (historyBlock) historyBlock.style.display = 'none';
+        
     } else {
         document.getElementById('tradeModalTitle').innerHTML = '<i class="fas fa-arrow-up" style="color: #e53e3e;"></i> Продажа';
         document.getElementById('confirmTradeBtn').style.background = '#e53e3e';
         confirmTradeBtnText.textContent = 'Продать';
         document.getElementById('tradeFromPlatformGroup').style.display = 'none';
         setModalContext('sell', null);
+        
+        // Показываем блок истории покупок (будет заполнен позже)
+        const historyBlock = document.getElementById('sellPurchaseHistory');
+        if (historyBlock) {
+            historyBlock.style.display = 'block';
+            document.getElementById('sellPurchaseList').innerHTML = 
+                '<div style="text-align: center; padding: 20px; color: #ff9f4a;"><i class="fas fa-info-circle"></i> Выберите площадку и актив</div>';
+            document.getElementById('sellQuickActions').style.display = 'none';
+            document.getElementById('sellCurrentBalance').innerHTML = '';
+        }
     }
 
     tradeModal.classList.add('active');
@@ -7480,6 +8836,9 @@ function openTradeModal(type) {
     document.getElementById('tradeTotal').value = '0';
     
     document.getElementById('tradeCryptoNetworkSection').style.display = 'none';
+    
+    // Сбрасываем данные о продаже
+    window.sellAssetData = null;
 }
 
 function closeTradeModal() {
@@ -7504,6 +8863,12 @@ function openTransferModal() {
     document.getElementById('transferNotes').value = '';
     
     document.getElementById('transferCryptoNetworkSection').style.display = 'none';
+    
+    // Скрываем блок баланса при открытии
+    hidePlatformBalance();
+    
+    // Сбрасываем сохраненные данные
+    currentPlatformBalanceData = null;
     
     setModalContext('transfer', null);
 }
@@ -7663,11 +9028,9 @@ async function confirmTrade() {
         } else {
             // Показываем подробную ошибку
             showNotification('error', 'Ошибка', result.message);
-            console.error('Trade error:', result.message);
         }
     } catch (error) {
         showNotification('error', 'Ошибка сети', 'Не удалось отправить запрос. Проверьте подключение к интернету.');
-        console.error('Network error:', error);
     } finally {
         // Восстанавливаем кнопку
         confirmBtn.innerHTML = originalText;
@@ -7686,12 +9049,6 @@ async function confirmTransfer() {
     const toNetwork = document.getElementById('transferNetworkTo')?.value || '';
     const date = document.getElementById('transferDate').value;
     const notes = document.getElementById('transferNotes').value;
-
-    // Логируем отправляемые данные
-    console.log('Отправка перевода:', {
-        fromPlatformId, toPlatformId, assetId, quantity, 
-        commission, commissionCurrency, fromNetwork, toNetwork, date, notes
-    });
 
     // Проверки
     if (!fromPlatformId) {
@@ -7761,13 +9118,11 @@ async function confirmTransfer() {
         
         // Получаем текст ответа для отладки
         const responseText = await response.text();
-        console.log('Ответ сервера (сырой):', responseText);
         
         let result;
         try {
             result = JSON.parse(responseText);
         } catch (e) {
-            console.error('Ошибка парсинга JSON:', e);
             showNotification('error', 'Ошибка сервера', 'Сервер вернул некорректный ответ: ' + responseText.substring(0, 200));
             return;
         }
@@ -7779,11 +9134,9 @@ async function confirmTransfer() {
         } else {
             // Показываем подробную ошибку
             showNotification('error', 'Ошибка', result.message);
-            console.error('Transfer error details:', result);
         }
     } catch (error) {
         showNotification('error', 'Ошибка сети', 'Не удалось отправить запрос: ' + error.message);
-        console.error('Network error:', error);
     } finally {
         confirmBtn.innerHTML = originalText;
         confirmBtn.disabled = false;
@@ -8456,18 +9809,36 @@ function closeAddAssetModal() {
 }
 
 function setActiveAssetType(type) {
+    // Убираем активный класс у всех кнопок типа актива
     document.querySelectorAll('.asset-type-btn').forEach(btn => {
         btn.classList.remove('active');
     });
     
+    // Добавляем активный класс выбранной кнопке
     const selectedBtn = document.querySelector(`.asset-type-btn[data-type="${type}"]`);
     if (selectedBtn) {
         selectedBtn.classList.add('active');
     }
     
+    // Сохраняем выбранный тип
     const hiddenInput = document.getElementById('newAssetType');
     if (hiddenInput) {
         hiddenInput.value = type;
+    }
+    
+    // ПОКАЗЫВАЕМ/СКРЫВАЕМ ВЫБОР СЕКТОРА (не скрываем родителя!)
+    const sectorGroup = document.getElementById('sectorSelectGroup');
+    if (sectorGroup) {
+        if (type === 'stock' || type === 'etf') {
+            sectorGroup.style.display = 'block';
+        } else {
+            sectorGroup.style.display = 'none';
+            // Сбрасываем выбранный сектор
+            document.querySelectorAll('.sector-option-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById('newAssetSector').value = '';
+        }
     }
 }
 
@@ -8480,6 +9851,41 @@ async function saveNewAsset() {
     const symbol = document.getElementById('newAssetSymbol').value.toUpperCase();
     const name = document.getElementById('newAssetName').value.trim();
     const type = getSelectedAssetType();
+    const sector = document.getElementById('newAssetSector').value;
+    
+    // АВТОМАТИЧЕСКОЕ ОПРЕДЕЛЕНИЕ ВАЛЮТЫ
+    let currencyCode = null;
+    
+    if (type === 'stock') {
+        // Иностранные акции (с .US или известные тикеры)
+        if (symbol.endsWith('.US') || 
+            ['TSLA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'NFLX'].includes(symbol)) {
+            currencyCode = 'USD';
+        } 
+        // Российские акции
+        else if (['SBER', 'GAZP', 'LKOH', 'YNDX', 'ROSN', 'VTBR', 'TATN', 'NLMK'].includes(symbol)) {
+            currencyCode = 'RUB';
+        }
+        // По умолчанию для акций - USD
+        else {
+            currencyCode = 'USD';
+        }
+    }
+    else if (type === 'crypto') {
+        currencyCode = 'USD';
+    }
+    else if (type === 'currency') {
+        currencyCode = symbol;
+    }
+    else if (type === 'etf') {
+        currencyCode = 'USD';
+    }
+
+    // ПРОВЕРКА: для акций и ETF сектор обязателен
+    if ((type === 'stock' || type === 'etf') && !sector) {
+        showNotification('error', 'Ошибка', 'Выберите сектор для акции/ETF');
+        return;
+    }
 
     if (!symbol) {
         showNotification('error', 'Ошибка', 'Символ актива обязателен');
@@ -8496,13 +9902,13 @@ async function saveNewAsset() {
         return;
     }
 
-    //showNotification('info', 'Сохранение', 'Добавляем актив...');
-
     const formData = new FormData();
     formData.append('action', 'add_asset_full');
     formData.append('symbol', symbol);
     formData.append('name', name);
     formData.append('type', type);
+    formData.append('currency_code', currencyCode || '');
+    formData.append('sector', sector || '');
 
     try {
         const response = await fetch(window.location.href, {
@@ -8510,7 +9916,16 @@ async function saveNewAsset() {
             body: formData
         });
         
-        const result = await response.json();
+        // Получаем текст ответа для отладки
+        const responseText = await response.text();
+        
+        let result;
+        try {
+            result = JSON.parse(responseText);
+        } catch (e) {
+            showNotification('error', 'Ошибка сервера', 'Сервер вернул некорректный ответ: ' + responseText.substring(0, 200));
+            return;
+        }
 
         if (result.success && result.asset_id) {
             showNotification('success', 'Успешно', 'Актив добавлен');
@@ -8519,7 +9934,9 @@ async function saveNewAsset() {
                 id: result.asset_id,
                 symbol: symbol,
                 name: name,
-                type: type
+                type: type,
+                currency_code: currencyCode,
+                sector: sector
             });
             
             if (currentModalContext.source === 'transfer') {
@@ -8534,7 +9951,7 @@ async function saveNewAsset() {
             showNotification('error', 'Ошибка', result.message || 'Не удалось добавить актив');
         }
     } catch (error) {
-        showNotification('error', 'Ошибка сети', 'Не удалось добавить актив');
+        showNotification('error', 'Ошибка сети', 'Не удалось добавить актив: ' + error.message);
     }
 }
 
@@ -8543,6 +9960,128 @@ async function saveNewAsset() {
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Обработчики для категорий расходов
+    document.getElementById('closeAddCategoryModalBtn')?.addEventListener('click', closeAddExpenseCategoryModal);
+    document.getElementById('cancelAddCategoryBtn')?.addEventListener('click', closeAddExpenseCategoryModal);
+    document.getElementById('confirmAddCategoryBtn')?.addEventListener('click', saveExpenseCategory);
+
+    // Обновление превью при изменении
+    document.getElementById('newCategoryIcon')?.addEventListener('input', updateCategoryPreview);
+    document.getElementById('newCategoryColor')?.addEventListener('input', updateCategoryPreview);
+
+    // Выбор иконки
+    document.getElementById('selectIconBtn')?.addEventListener('click', openIconSelectModal);
+    document.getElementById('closeIconModalBtn')?.addEventListener('click', closeIconSelectModal);
+    document.getElementById('closeIconModalFooterBtn')?.addEventListener('click', closeIconSelectModal);
+
+    // Обработчики для выбора иконок
+    document.querySelectorAll('.icon-option').forEach(icon => {
+        icon.addEventListener('click', function() {
+            selectIcon(this.dataset.icon);
+        });
+    });
+
+    // Поиск иконок
+    document.getElementById('iconSearch')?.addEventListener('input', function(e) {
+        const search = e.target.value.toLowerCase();
+        document.querySelectorAll('.icon-option').forEach(icon => {
+            const text = icon.textContent.toLowerCase();
+            if (text.includes(search) || icon.dataset.icon.includes(search)) {
+                icon.style.display = 'block';
+            } else {
+                icon.style.display = 'none';
+            }
+        });
+    });
+
+    // Кнопка расходов
+    document.querySelectorAll('.operation-type-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            const type = this.dataset.type;
+            if (type === 'deposit') openDepositModal();
+            else if (type === 'buy') openBuyModal();
+            else if (type === 'sell') openSellModal();
+            else if (type === 'transfer') openTransferModal();
+            else if (type === 'expense') openExpenseModal(); // Добавляем обработчик расходов
+        });
+    });
+
+    // Кнопка просмотра всех расходов (можно добавить в карточку или отдельную кнопку)
+    document.getElementById('viewAllExpensesBtn')?.addEventListener('click', openExpensesListModal);
+
+    // Обработчики для модального окна расходов
+    document.getElementById('closeExpenseModalBtn')?.addEventListener('click', closeExpenseModal);
+    document.getElementById('cancelExpenseBtn')?.addEventListener('click', closeExpenseModal);
+    document.getElementById('confirmExpenseBtn')?.addEventListener('click', saveExpense);
+
+    // Обработчики для списка расходов
+    document.getElementById('closeExpensesListModalBtn')?.addEventListener('click', closeExpensesListModal);
+    document.getElementById('closeExpensesListModalFooterBtn')?.addEventListener('click', closeExpensesListModal);
+    document.getElementById('addNewExpenseBtn')?.addEventListener('click', function() {
+        closeExpensesListModal();
+        openExpenseModal();
+    });
+
+    // Выбор валюты для расходов
+    document.getElementById('selectExpenseCurrencyBtn')?.addEventListener('click', function(e) {
+        e.preventDefault();
+        setModalContext('expense', 'currency');
+        openCurrencyModal('expense', 'price');
+    });
+
+    // Кнопка "Продать всё"
+    document.getElementById('sellQuickFillAllBtn')?.addEventListener('click', fillSellAll);
+
+    // Кнопка "По средней цене"
+    document.getElementById('sellQuickFillAvgBtn')?.addEventListener('click', fillSellByAvgPrice);
+
+    // Обработчики для модального окна типов криптовалют
+    document.getElementById('closeCryptoTypeModalBtn')?.addEventListener('click', closeCryptoTypeModal);
+    document.getElementById('closeCryptoTypeModalFooterBtn')?.addEventListener('click', closeCryptoTypeModal);
+
+    // Закрытие по клику на overlay
+    const cryptoTypeModal = document.getElementById('cryptoTypeModal');
+    if (cryptoTypeModal) {
+        cryptoTypeModal.addEventListener('click', (e) => {
+            if (e.target === cryptoTypeModal) {
+                closeCryptoTypeModal();
+            }
+        });
+    }
+
+    // Обработчики для модального окна активов сектора
+    document.getElementById('closeSectorAssetsModalBtn')?.addEventListener('click', closeSectorAssetsModal);
+    document.getElementById('closeSectorAssetsModalFooterBtn')?.addEventListener('click', closeSectorAssetsModal);
+
+    // Закрытие по клику на overlay
+    const sectorAssetsModal = document.getElementById('sectorAssetsModal');
+    if (sectorAssetsModal) {
+        sectorAssetsModal.addEventListener('click', (e) => {
+            if (e.target === sectorAssetsModal) {
+                closeSectorAssetsModal();
+            }
+        });
+    }
+
+    // Обработчики для кнопок выбора сектора (с классом sector-option-btn)
+    document.querySelectorAll('.sector-option-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const sector = this.dataset.sector;
+            
+            // Убираем активный класс у всех кнопок сектора
+            document.querySelectorAll('.sector-option-btn').forEach(b => {
+                b.classList.remove('active');
+            });
+            
+            // Добавляем активный класс текущей кнопке
+            this.classList.add('active');
+            
+            // Сохраняем выбранный сектор
+            document.getElementById('newAssetSector').value = sector;
+        });
+    });
+
     // Обработчики для модального окна активов площадки
     document.getElementById('closePlatformAssetsModalBtn')?.addEventListener('click', closePlatformAssetsModal);
     document.getElementById('closePlatformAssetsModalFooterBtn')?.addEventListener('click', closePlatformAssetsModal);
@@ -8562,6 +10101,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.key === 'Escape') {
             if (platformAssetsModal?.classList.contains('active')) {
                 closePlatformAssetsModal();
+            }
+            if (cryptoTypeModal?.classList.contains('active')) {
+                closeCryptoTypeModal();
             }
         }
     });
@@ -9409,7 +10951,6 @@ async function loadOperations(page) {
                 // Фильтруем все операции один раз
                 allFilteredOperations = filterOperations(data.operations);
             } else {
-                console.error('Ошибка в ответе:', data.message);
                 if (operationsList) operationsList.style.opacity = '1';
                 return;
             }
@@ -9432,7 +10973,6 @@ async function loadOperations(page) {
         updateOperationsList(allFilteredOperations, pagination);
         
     } catch (error) {
-        console.error('Ошибка при загрузке операций:', error);
         showNotification('error', 'Ошибка', 'Не удалось загрузить операции');
     } finally {
         if (operationsList) {
@@ -10175,7 +11715,6 @@ document.getElementById('themeToggleBtn').addEventListener('click', function() {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
         showNotification('error', 'Ошибка', 'Не удалось сохранить тему');
     })
     .finally(() => {
@@ -10480,21 +12019,16 @@ function showExecuteConfirmation(orderId) {
     openExecuteModal(orderId, orderData);
 }
 
-function showCancelConfirmation(orderId) {
-    console.log('showCancelConfirmation вызвана с orderId:', orderId);
-    
+function showCancelConfirmation(orderId) {    
     // Находим карточку ордера и собираем данные
     const orderCard = document.getElementById(`order-${orderId}`);
     if (!orderCard) {
-        console.error('Карточка ордера не найдена для ID:', orderId);
         return;
     }
     
     // Устанавливаем currentOrderId и testOrderId
     currentOrderId = orderId;
     testOrderId = orderId; // ДОБАВЛЯЕМ ТЕСТОВУЮ ПЕРЕМЕННУЮ
-    console.log('currentOrderId установлен в:', currentOrderId);
-    console.log('testOrderId установлен в:', testOrderId);
     
     const orderData = {
         operation_type: orderCard.querySelector('.order-action').textContent.includes('Покупка') ? 'buy' : 'sell',
@@ -10509,10 +12043,7 @@ function showCancelConfirmation(orderId) {
 }
 
 // Обновленные асинхронные функции
-async function confirmExecuteOrder() {
-    console.log('confirmExecuteOrder вызвана, currentOrderId =', currentOrderId);
-    console.log('Тип currentOrderId:', typeof currentOrderId);
-    
+async function confirmExecuteOrder() {    
     if (!currentOrderId) {
         showNotification('error', 'Ошибка', 'ID ордера не указан');
         return;
@@ -10524,9 +12055,7 @@ async function confirmExecuteOrder() {
     formData.append('action', 'execute_limit_order');
     formData.append('order_id', String(currentOrderId)); // Принудительно преобразуем в строку
     
-    console.log('Отправляем order_id:', currentOrderId);
     for (let pair of formData.entries()) {
-        console.log(pair[0] + ': ' + pair[1] + ' (тип: ' + typeof pair[1] + ')');
     }
     
     try {
@@ -10535,10 +12064,7 @@ async function confirmExecuteOrder() {
             body: formData
         });
         
-        console.log('Статус ответа:', response.status);
-        
         const result = await response.json();
-        console.log('Ответ сервера:', result);
         
         if (result.success) {
             showNotification('success', 'Успешно', result.message);
@@ -10579,7 +12105,6 @@ async function confirmExecuteOrder() {
         }
     } catch (error) {
         showNotification('error', 'Ошибка сети', 'Не удалось исполнить ордер');
-        console.error('Error:', error);
     }
 }
 
@@ -10643,7 +12168,6 @@ async function confirmCancelOrder() {
         }
     } catch (error) {
         showNotification('error', 'Ошибка сети', 'Не удалось отменить ордер');
-        console.error('Error:', error);
     }
 }
 
@@ -10828,7 +12352,6 @@ async function confirmDeleteNote() {
         }
     } catch (error) {
         showNotification('error', 'Ошибка сети', 'Не удалось удалить заметку');
-        console.error('Error deleting note:', error);
         // Если ошибка, возвращаем элемент обратно
         if (noteElement) {
             noteElement.style.opacity = '1';
@@ -10876,7 +12399,6 @@ async function archiveNote(noteId, archive) {
         }
     } catch (error) {
         showNotification('error', 'Ошибка сети', 'Не удалось выполнить операцию');
-        console.error('Error archiving note:', error);
     }
 }
 
@@ -10912,7 +12434,6 @@ async function loadNotes() {
             container.innerHTML = '<div style="text-align: center; padding: 20px; color: #6b7a8f;">Не удалось загрузить заметки</div>';
         }
     } catch (error) {
-        console.error('Error loading notes:', error);
         if (container) {
             container.innerHTML = '<div style="text-align: center; padding: 20px; color: #6b7a8f;">Ошибка загрузки заметок</div>';
         }
@@ -10943,7 +12464,6 @@ async function loadArchivedNotes() {
             container.innerHTML = '<div style="text-align: center; padding: 20px; color: #6b7a8f;">Не удалось загрузить архивные заметки</div>';
         }
     } catch (error) {
-        console.error('Error loading archived notes:', error);
         container.innerHTML = '<div style="text-align: center; padding: 20px; color: #6b7a8f;">Ошибка загрузки</div>';
     }
 }
@@ -11144,7 +12664,6 @@ async function addNetworkToDatabase(networkData) {
         }
         return false;
     } catch (error) {
-        console.error('Error adding network:', error);
         return false;
     }
 }
@@ -11958,6 +13477,1288 @@ if (networkAssetsModal) {
             closeNetworkAssetsModal();
         }
     });
+}
+
+// ============================================================================
+// МОДАЛЬНОЕ ОКНО АКТИВОВ ПО СЕКТОРАМ
+// ============================================================================
+
+// Данные по активам секторов из PHP
+const sectorAssetsData = <?= $sector_assets_json ?>;
+
+function openSectorAssetsModal(sectorName, displayName) {
+    const modal = document.getElementById('sectorAssetsModal');
+    const titleSpan = document.getElementById('sectorAssetsName');
+    const body = document.getElementById('sectorAssetsBody');
+    
+    if (!modal || !body) return;
+    
+    // Устанавливаем заголовок
+    titleSpan.textContent = displayName;
+    
+    // Показываем загрузку
+    body.innerHTML = '<div style="text-align: center; padding: 30px;"><i class="fas fa-spinner fa-spin"></i> Загрузка активов...</div>';
+    
+    modal.classList.add('active');
+    
+    // Получаем активы для этого сектора
+    const sectorData = sectorAssetsData[sectorName];
+    
+    if (!sectorData || !sectorData.assets || sectorData.assets.length === 0) {
+        body.innerHTML = `
+            <div style="text-align: center; padding: 40px 20px;">
+                <i class="fas fa-box-open" style="font-size: 48px; opacity: 0.3; margin-bottom: 16px; display: block;"></i>
+                <p style="color: #6b7a8f;">В секторе "${displayName}" нет активов</p>
+            </div>
+        `;
+        return;
+    }
+    
+    // Сортируем активы по стоимости (от большей к меньшей)
+    const assets = [...sectorData.assets].sort((a, b) => (parseFloat(b.value_usd) || 0) - (parseFloat(a.value_usd) || 0));
+    
+    // Рассчитываем общую стоимость
+    let totalValueUsd = sectorData.total_value_usd;
+    
+    // Получаем курс USD/RUB
+    const usdRubRate = <?= $usd_rub_rate ?>;
+    const totalValueRub = totalValueUsd * usdRubRate;
+    
+    // Форматируем общую стоимость
+    let totalUsdStr = totalValueUsd.toFixed(2);
+    let totalUsdParts = totalUsdStr.split('.');
+    totalUsdParts[0] = totalUsdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    const totalUsdFormatted = totalUsdParts[0] + (totalUsdParts[1] ? '.' + totalUsdParts[1] : '');
+    
+    let totalRubStr = Math.round(totalValueRub).toString();
+    totalRubStr = totalRubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    
+    // Формируем HTML
+    let html = `
+        <style>
+            .sector-assets-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            .sector-assets-table th {
+                text-align: left;
+                padding: 12px 8px;
+                background: var(--bg-tertiary, #f8fafd);
+                font-weight: 600;
+                font-size: 13px;
+                color: var(--text-secondary, #6b7a8f);
+                border-bottom: 2px solid var(--border-color, #edf2f7);
+            }
+            .sector-assets-table td {
+                padding: 12px 8px;
+                border-bottom: 1px solid var(--border-color, #edf2f7);
+                vertical-align: middle;
+            }
+            .sector-assets-table tr:hover {
+                background: var(--bg-tertiary, #f8fafd);
+            }
+            .sector-assets-symbol {
+                font-weight: 600;
+                color: var(--text-primary, #2c3e50);
+            }
+            .sector-assets-quantity {
+                font-family: monospace;
+                text-align: right;
+            }
+            .sector-assets-value {
+                text-align: right;
+                font-weight: 500;
+                color: #4a9eff;
+            }
+            .sector-assets-summary {
+                background: var(--bg-tertiary, #f0f3f7);
+                border-radius: 12px;
+                padding: 16px;
+                margin-top: 16px;
+            }
+            .sector-assets-summary-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 8px 0;
+            }
+            .sector-assets-summary-row:first-child {
+                border-bottom: 1px solid var(--border-color, #e0e6ed);
+                margin-bottom: 8px;
+                padding-bottom: 12px;
+            }
+            .sector-assets-total {
+                font-weight: 700;
+                font-size: 18px;
+                color: #4a9eff;
+            }
+            .dark-theme .sector-assets-summary {
+                background: var(--bg-tertiary);
+            }
+        </style>
+        
+        <table class="sector-assets-table">
+            <thead>
+                <tr>
+                    <th>Актив</th>
+                    <th style="text-align: right;">Количество</th>
+                    <th style="text-align: right;">Средняя цена</th>
+                    <th style="text-align: right;">Стоимость</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    assets.forEach(asset => {
+        const quantityNum = parseFloat(asset.quantity) || 0;
+        const avgPriceNum = parseFloat(asset.average_buy_price) || 0;
+        const valueUsdNum = parseFloat(asset.value_usd) || 0;
+        
+        // Форматирование количества
+        let quantityFormatted = '';
+        if (asset.asset_type === 'crypto') {
+            if (Math.floor(quantityNum) === quantityNum) {
+                quantityFormatted = quantityNum.toLocaleString('ru-RU').replace(/,/g, ' ');
+            } else {
+                let str = quantityNum.toFixed(6).replace(/\.?0+$/, '');
+                let parts = str.split('.');
+                parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                quantityFormatted = parts[0] + (parts[1] ? '.' + parts[1] : '');
+            }
+        } else {
+            let str = quantityNum.toFixed(2).replace(/\.?0+$/, '');
+            let parts = str.split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            quantityFormatted = parts[0] + (parts[1] ? '.' + parts[1] : '');
+        }
+        
+        // Форматирование средней цены
+        let avgPriceFormatted = '—';
+        let avgPriceCurrency = '';
+        if (avgPriceNum > 0) {
+            let str = avgPriceNum.toFixed(2).replace(/\.?0+$/, '');
+            let parts = str.split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            avgPriceFormatted = parts[0] + (parts[1] ? '.' + parts[1] : '');
+            avgPriceCurrency = asset.currency_code || 'USD';
+        }
+        
+        // Форматирование стоимости
+        const valueRubNum = valueUsdNum * usdRubRate;
+        
+        let usdStr = valueUsdNum.toFixed(2);
+        let usdParts = usdStr.split('.');
+        usdParts[0] = usdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        const usdFormatted = usdParts[0] + (usdParts[1] ? '.' + usdParts[1] : '');
+        
+        let rubStr = Math.round(valueRubNum).toString();
+        rubStr = rubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        
+        const valueFormatted = `$${usdFormatted}<br><span style="font-size: 11px; color: #6b7a8f;">${rubStr} ₽</span>`;
+        
+        // Определяем иконку для актива
+        let assetIcon = getAssetIcon(asset.symbol);
+        
+        html += `
+            <tr>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="width: 32px; height: 32px; background: var(--bg-tertiary, #f0f3f7); border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                            <i class="${assetIcon.icon}" style="color: ${assetIcon.color};"></i>
+                        </div>
+                        <div>
+                            <div class="sector-assets-symbol">${asset.symbol}</div>
+                            <div style="font-size: 11px; color: #6b7a8f;">${asset.platform_name}</div>
+                        </div>
+                    </div>
+                </td>
+                <td class="sector-assets-quantity">${quantityFormatted}</td>
+                <td class="sector-assets-quantity">${avgPriceFormatted} ${avgPriceCurrency}</td>
+                <td class="sector-assets-value">${valueFormatted}</td>
+            </tr>
+        `;
+    });
+    
+    html += `
+            </tbody>
+        </table>
+        
+        <div class="sector-assets-summary">
+            <div class="sector-assets-summary-row">
+                <span style="font-weight: 600;">Всего активов:</span>
+                <span style="font-weight: 600;">${assets.length}</span>
+            </div>
+            <div class="sector-assets-summary-row">
+                <span>Общая стоимость в секторе ${displayName}:</span>
+                <span class="sector-assets-total">$${totalUsdFormatted}<br><span style="font-size: 12px; font-weight: normal;">${totalRubStr} ₽</span></span>
+            </div>
+        </div>
+    `;
+    
+    body.innerHTML = html;
+}
+
+function closeSectorAssetsModal() {
+    const modal = document.getElementById('sectorAssetsModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+// ============================================================================
+// МОДАЛЬНОЕ ОКНО АКТИВОВ ПО ТИПАМ КРИПТОВАЛЮТ
+// ============================================================================
+
+// Данные по активам типов криптовалют из PHP
+const cryptoTypeAssetsData = <?= $crypto_type_assets_json ?>;
+
+function openCryptoTypeModal(type, displayName) {
+    const modal = document.getElementById('cryptoTypeModal');
+    const titleSpan = document.getElementById('cryptoTypeName');
+    const body = document.getElementById('cryptoTypeBody');
+    
+    if (!modal || !body) return;
+    
+    // Устанавливаем заголовок
+    titleSpan.textContent = displayName;
+    
+    // Показываем загрузку
+    body.innerHTML = '<div style="text-align: center; padding: 30px;"><i class="fas fa-spinner fa-spin"></i> Загрузка активов...</div>';
+    
+    modal.classList.add('active');
+    
+    // Получаем активы для этого типа
+    const typeData = cryptoTypeAssetsData[type];
+    
+    if (!typeData || !typeData.assets || typeData.assets.length === 0) {
+        body.innerHTML = `
+            <div style="text-align: center; padding: 40px 20px;">
+                <i class="fas fa-box-open" style="font-size: 48px; opacity: 0.3; margin-bottom: 16px; display: block;"></i>
+                <p style="color: #6b7a8f;">В категории "${displayName}" нет активов</p>
+            </div>
+        `;
+        return;
+    }
+    
+    // Сортируем активы по стоимости (от большей к меньшей)
+    const assets = [...typeData.assets].sort((a, b) => (parseFloat(b.value_usd) || 0) - (parseFloat(a.value_usd) || 0));
+    
+    // Рассчитываем общую стоимость
+    let totalValueUsd = typeData.total_value_usd;
+    
+    // Получаем курс USD/RUB
+    const usdRubRate = <?= $usd_rub_rate ?>;
+    const totalValueRub = totalValueUsd * usdRubRate;
+    
+    // Форматируем общую стоимость
+    let totalUsdStr = totalValueUsd.toFixed(2);
+    let totalUsdParts = totalUsdStr.split('.');
+    totalUsdParts[0] = totalUsdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    const totalUsdFormatted = totalUsdParts[0] + (totalUsdParts[1] ? '.' + totalUsdParts[1] : '');
+    
+    let totalRubStr = Math.round(totalValueRub).toString();
+    totalRubStr = totalRubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    
+    // Формируем HTML
+    let html = `
+        <style>
+            .crypto-type-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            .crypto-type-table th {
+                text-align: left;
+                padding: 12px 8px;
+                background: var(--bg-tertiary, #f8fafd);
+                font-weight: 600;
+                font-size: 13px;
+                color: var(--text-secondary, #6b7a8f);
+                border-bottom: 2px solid var(--border-color, #edf2f7);
+            }
+            .crypto-type-table td {
+                padding: 12px 8px;
+                border-bottom: 1px solid var(--border-color, #edf2f7);
+                vertical-align: middle;
+            }
+            .crypto-type-table tr:hover {
+                background: var(--bg-tertiary, #f8fafd);
+            }
+            .crypto-type-symbol {
+                font-weight: 600;
+                color: var(--text-primary, #2c3e50);
+            }
+            .crypto-type-quantity {
+                font-family: monospace;
+                text-align: right;
+            }
+            .crypto-type-value {
+                text-align: right;
+                font-weight: 500;
+                color: #ff9f4a;
+            }
+            .crypto-type-summary {
+                background: var(--bg-tertiary, #f0f3f7);
+                border-radius: 12px;
+                padding: 16px;
+                margin-top: 16px;
+            }
+            .crypto-type-summary-row {
+                display: flex;
+                justify-content: space-between;
+                padding: 8px 0;
+            }
+            .crypto-type-summary-row:first-child {
+                border-bottom: 1px solid var(--border-color, #e0e6ed);
+                margin-bottom: 8px;
+                padding-bottom: 12px;
+            }
+            .crypto-type-total {
+                font-weight: 700;
+                font-size: 18px;
+                color: #ff9f4a;
+            }
+            .dark-theme .crypto-type-summary {
+                background: var(--bg-tertiary);
+            }
+        </style>
+        
+        <table class="crypto-type-table">
+            <thead>
+                <tr>
+                    <th>Актив</th>
+                    <th style="text-align: right;">Количество</th>
+                    <th style="text-align: right;">Средняя цена</th>
+                    <th style="text-align: right;">Стоимость</th>
+                 </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    assets.forEach(asset => {
+        const quantityNum = parseFloat(asset.quantity) || 0;
+        const avgPriceNum = parseFloat(asset.average_buy_price) || 0;
+        const valueUsdNum = parseFloat(asset.value_usd) || 0;
+        
+        // Форматирование количества
+        let quantityFormatted = '';
+        if (Math.floor(quantityNum) === quantityNum) {
+            quantityFormatted = quantityNum.toLocaleString('ru-RU').replace(/,/g, ' ');
+        } else {
+            let str = quantityNum.toFixed(6).replace(/\.?0+$/, '');
+            let parts = str.split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            quantityFormatted = parts[0] + (parts[1] ? '.' + parts[1] : '');
+        }
+        
+        // Форматирование средней цены
+        let avgPriceFormatted = '—';
+        let avgPriceCurrency = '';
+        if (avgPriceNum > 0) {
+            let str = avgPriceNum.toFixed(2).replace(/\.?0+$/, '');
+            let parts = str.split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            avgPriceFormatted = parts[0] + (parts[1] ? '.' + parts[1] : '');
+            avgPriceCurrency = asset.currency_code || 'USD';
+        }
+        
+        // Форматирование стоимости
+        const valueRubNum = valueUsdNum * usdRubRate;
+        
+        let usdStr = valueUsdNum.toFixed(2);
+        let usdParts = usdStr.split('.');
+        usdParts[0] = usdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        const usdFormatted = usdParts[0] + (usdParts[1] ? '.' + usdParts[1] : '');
+        
+        let rubStr = Math.round(valueRubNum).toString();
+        rubStr = rubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        
+        const valueFormatted = `$${usdFormatted}<br><span style="font-size: 11px; color: #6b7a8f;">${rubStr} ₽</span>`;
+        
+        // Определяем иконку для актива
+        let assetIcon = getAssetIcon(asset.symbol);
+        
+        html += `
+            <tr>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="width: 32px; height: 32px; background: var(--bg-tertiary, #f0f3f7); border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                            <i class="${assetIcon.icon}" style="color: ${assetIcon.color};"></i>
+                        </div>
+                        <div>
+                            <div class="crypto-type-symbol">${asset.symbol}</div>
+                            <div style="font-size: 11px; color: #6b7a8f;">${asset.platform_name}</div>
+                        </div>
+                    </div>
+                </td>
+                <td class="crypto-type-quantity">${quantityFormatted}</td>
+                <td class="crypto-type-quantity">${avgPriceFormatted} ${avgPriceCurrency}</td>
+                <td class="crypto-type-value">${valueFormatted}</td>
+            </tr>
+        `;
+    });
+    
+    html += `
+            </tbody>
+        </table>
+        
+        <div class="crypto-type-summary">
+            <div class="crypto-type-summary-row">
+                <span style="font-weight: 600;">Всего активов:</span>
+                <span style="font-weight: 600;">${assets.length}</span>
+            </div>
+            <div class="crypto-type-summary-row">
+                <span>Общая стоимость в категории ${displayName}:</span>
+                <span class="crypto-type-total">$${totalUsdFormatted}<br><span style="font-size: 12px; font-weight: normal;">${totalRubStr} ₽</span></span>
+            </div>
+        </div>
+    `;
+    
+    body.innerHTML = html;
+}
+
+function closeCryptoTypeModal() {
+    const modal = document.getElementById('cryptoTypeModal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+// Функция для загрузки истории покупок при продаже
+async function loadPurchaseHistoryForSell(assetId, platformId) {
+    if (!assetId || !platformId) return;
+    
+    const historyBlock = document.getElementById('sellPurchaseHistory');
+    const purchaseList = document.getElementById('sellPurchaseList');
+    const currentBalanceSpan = document.getElementById('sellCurrentBalance');
+    const quickActions = document.getElementById('sellQuickActions');
+    
+    if (!historyBlock) return;
+    
+    // Показываем блок с загрузкой
+    historyBlock.style.display = 'block';
+    purchaseList.innerHTML = '<div style="text-align: center; padding: 20px; color: #6b7a8f;"><i class="fas fa-spinner fa-spin"></i> Загрузка истории...</div>';
+    quickActions.style.display = 'none';
+    
+    const formData = new FormData();
+    formData.append('action', 'get_purchase_history');
+    formData.append('asset_id', assetId);
+    formData.append('platform_id', platformId);
+    
+    try {
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+            const data = result.data;
+            const currentQuantity = data.current_quantity;
+            const avgPrice = data.avg_buy_price;
+            const purchases = data.purchases;
+            
+            // Показываем текущий баланс
+            const assetSymbol = document.getElementById('selectedTradeAssetDisplay').textContent;
+            currentBalanceSpan.innerHTML = `<i class="fas fa-wallet"></i> Доступно: ${formatAmount(currentQuantity, assetSymbol)} ${assetSymbol}`;
+            
+            if (purchases.length === 0) {
+                purchaseList.innerHTML = `
+                    <div style="text-align: center; padding: 20px; color: #6b7a8f;">
+                        <i class="fas fa-info-circle"></i> Нет истории покупок на этой площадке
+                    </div>
+                `;
+                quickActions.style.display = 'none';
+            } else {
+                // Формируем список покупок
+                let html = '<div style="font-size: 12px; margin-bottom: 8px; color: #6b7a8f;">История покупок:</div>';
+                
+                purchases.forEach(purchase => {
+                    const date = new Date(purchase.operation_date).toLocaleDateString('ru-RU');
+                    const quantity = formatAmount(purchase.quantity, assetSymbol);
+                    const price = formatAmount(purchase.price, purchase.price_currency);
+                    const total = formatAmount(purchase.quantity * purchase.price, purchase.price_currency);
+                    
+                    html += `
+                        <div class="purchase-item" style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border-color, #edf2f7); cursor: pointer;" 
+                             onclick="fillSellFromPurchase(${purchase.quantity}, ${purchase.price}, '${purchase.price_currency}')">
+                            <div>
+                                <div style="font-weight: 500;">${quantity} ${assetSymbol}</div>
+                                <div style="font-size: 11px; color: #6b7a8f;">${date}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div>по ${price} ${purchase.price_currency}</div>
+                                <div style="font-size: 11px; color: #00a86b;">${total} ${purchase.price_currency}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                // Добавляем информацию о средней цене
+                if (avgPrice > 0) {
+                    html += `
+                        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color, #e0e6ed);">
+                            <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                                <span><i class="fas fa-chart-line"></i> Средняя цена покупки:</span>
+                                <span style="font-weight: 600;">${formatAmount(avgPrice, 'USD')} USD</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 13px; margin-top: 4px;">
+                                <span><i class="fas fa-coins"></i> Общая стоимость:</span>
+                                <span style="font-weight: 600;">${formatAmount(currentQuantity * avgPrice, 'USD')} USD</span>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                purchaseList.innerHTML = html;
+                quickActions.style.display = 'block';
+                
+                // Сохраняем данные для быстрых действий
+                window.sellAssetData = {
+                    assetId: assetId,
+                    platformId: platformId,
+                    currentQuantity: currentQuantity,
+                    avgPrice: avgPrice,
+                    symbol: document.getElementById('selectedTradeAssetDisplay').textContent
+                };
+            }
+        } else {
+            purchaseList.innerHTML = '<div style="text-align: center; padding: 20px; color: #e53e3e;">Ошибка загрузки истории</div>';
+            quickActions.style.display = 'none';
+        }
+    } catch (error) {
+        purchaseList.innerHTML = '<div style="text-align: center; padding: 20px; color: #e53e3e;">Ошибка загрузки</div>';
+        quickActions.style.display = 'none';
+    }
+}
+
+// Функция для заполнения формы из конкретной покупки
+function fillSellFromPurchase(quantity, price, currency) {
+    const quantityInput = document.getElementById('tradeQuantity');
+    const priceInput = document.getElementById('tradePrice');
+    const priceCurrencyBtn = document.getElementById('selectedTradePriceCurrencyDisplay');
+    const priceCurrencyHidden = document.getElementById('tradePriceCurrency');
+    
+    if (quantityInput) {
+        // Форматируем количество
+        let quantityStr = quantity.toString();
+        if (Number.isInteger(quantity)) {
+            quantityStr = quantity.toLocaleString('ru-RU').replace(/,/g, ' ');
+        } else {
+            quantityStr = quantity.toFixed(6).replace(/\.?0+$/, '');
+            let parts = quantityStr.split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            quantityStr = parts.join('.');
+        }
+        quantityInput.value = quantityStr;
+        
+        // Триггерим событие для пересчета итога
+        quantityInput.dispatchEvent(new Event('input'));
+    }
+    
+    if (priceInput) {
+        // Форматируем цену
+        let priceStr = price.toFixed(2);
+        let parts = priceStr.split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        priceInput.value = parts.join('.');
+        
+        // Триггерим событие для пересчета итога
+        priceInput.dispatchEvent(new Event('input'));
+    }
+    
+    // Устанавливаем валюту цены
+    if (priceCurrencyBtn && priceCurrencyHidden) {
+        priceCurrencyBtn.textContent = currency;
+        priceCurrencyHidden.value = currency;
+        
+        // Копируем валюту в комиссию, если там ничего не выбрано
+        const commissionDisplay = document.getElementById('selectedTradeCommissionCurrencyDisplay');
+        const commissionHidden = document.getElementById('tradeCommissionCurrency');
+        
+        if (commissionDisplay && commissionHidden && !commissionHidden.value) {
+            commissionDisplay.textContent = currency;
+            commissionHidden.value = currency;
+        }
+    }
+    
+    // Показываем уведомление
+    //showNotification('info', 'Заполнено', `Количество: ${quantity} ${window.sellAssetData?.symbol || ''}`);
+}
+
+// Функция для быстрого заполнения "Продать всё"
+function fillSellAll() {
+    if (!window.sellAssetData) return;
+    
+    const quantity = window.sellAssetData.currentQuantity;
+    const avgPrice = window.sellAssetData.avgPrice;
+    
+    if (quantity <= 0) {
+        showNotification('error', 'Ошибка', 'Нет доступного количества для продажи');
+        return;
+    }
+    
+    const quantityInput = document.getElementById('tradeQuantity');
+    if (quantityInput) {
+        let quantityStr = quantity.toString();
+        if (Number.isInteger(quantity)) {
+            quantityStr = quantity.toLocaleString('ru-RU').replace(/,/g, ' ');
+        } else {
+            quantityStr = quantity.toFixed(6).replace(/\.?0+$/, '');
+            let parts = quantityStr.split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            quantityStr = parts.join('.');
+        }
+        quantityInput.value = quantityStr;
+        quantityInput.dispatchEvent(new Event('input'));
+    }
+    
+    showNotification('info', 'Заполнено', `Продажа всего количества: ${formatAmount(quantity, window.sellAssetData.symbol)} ${window.sellAssetData.symbol}`);
+}
+
+// Функция для быстрого заполнения по средней цене
+function fillSellByAvgPrice() {
+    if (!window.sellAssetData || window.sellAssetData.avgPrice <= 0) {
+        showNotification('error', 'Ошибка', 'Нет данных о средней цене');
+        return;
+    }
+    
+    const priceInput = document.getElementById('tradePrice');
+    const price = window.sellAssetData.avgPrice;
+    
+    if (priceInput) {
+        let priceStr = price.toFixed(2);
+        let parts = priceStr.split('.');
+        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        priceInput.value = parts.join('.');
+        priceInput.dispatchEvent(new Event('input'));
+    }
+    
+    showNotification('info', 'Заполнено', `Цена установлена по средней: ${formatAmount(window.sellAssetData.avgPrice, 'USD')} USD`);
+}
+
+// Функция для загрузки баланса площадки
+let currentPlatformBalanceData = null;
+
+async function loadPlatformBalance(platformId, platformName) {
+    if (!platformId) return;
+    
+    const balanceBlock = document.getElementById('transferFromPlatformBalance');
+    const assetsList = document.getElementById('transferPlatformAssetsList');
+    const totalValueSpan = document.getElementById('transferPlatformTotalValue');
+    const totalDiv = document.getElementById('transferPlatformTotal');
+    const totalUsdSpan = document.getElementById('transferPlatformTotalUsd');
+    const balanceTitle = document.getElementById('platformBalanceTitle');
+    
+    if (!balanceBlock) return;
+    
+    // ИЗМЕНЕНИЕ: Обновляем заголовок с названием площадки
+    if (balanceTitle) {
+        balanceTitle.innerHTML = `<i class="fas fa-wallet"></i> Баланс: ${platformName}`;
+    }
+    
+    // Показываем блок с загрузкой
+    balanceBlock.style.display = 'block';
+    assetsList.innerHTML = '<div style="text-align: center; padding: 15px; color: #6b7a8f;"><i class="fas fa-spinner fa-spin"></i> Загрузка баланса...</div>';
+    totalDiv.style.display = 'none';
+    
+    const formData = new FormData();
+    formData.append('action', 'get_platform_balance');
+    formData.append('platform_id', platformId);
+    
+    try {
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success && result.assets) {
+            const assets = result.assets;
+            const totalUsd = result.total_value_usd;
+            const totalRub = result.total_value_rub;
+            
+            // Получаем курс USD/RUB из PHP
+            const usdRubRate = <?= $usd_rub_rate ?>;
+            
+            // Форматируем общую стоимость
+            let totalUsdStr = totalUsd.toFixed(2);
+            let totalUsdParts = totalUsdStr.split('.');
+            totalUsdParts[0] = totalUsdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            const totalUsdFormatted = totalUsdParts[0] + (totalUsdParts[1] ? '.' + totalUsdParts[1] : '');
+            
+            let totalRubStr = Math.round(totalRub).toString();
+            totalRubStr = totalRubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            
+            totalValueSpan.innerHTML = `<i class="fas fa-chart-line"></i> ${totalUsdFormatted} $ / ${totalRubStr} ₽`;
+            
+            if (assets.length === 0) {
+                assetsList.innerHTML = `
+                    <div style="text-align: center; padding: 20px; color: #6b7a8f;">
+                        <i class="fas fa-box-open"></i> Нет активов на площадке ${platformName}
+                    </div>
+                `;
+                totalDiv.style.display = 'none';
+            } else {
+                // Формируем список активов (остается без изменений)
+                let html = '';
+                
+                assets.forEach(asset => {
+                    const quantity = parseFloat(asset.quantity);
+                    const valueUsd = parseFloat(asset.value_usd);
+                    const valueRub = valueUsd * usdRubRate;
+                    
+                    // Форматируем количество
+                    let quantityFormatted = '';
+                    if (asset.asset_type === 'crypto') {
+                        if (Math.floor(quantity) === quantity) {
+                            quantityFormatted = quantity.toLocaleString('ru-RU').replace(/,/g, ' ');
+                        } else {
+                            let str = quantity.toFixed(6).replace(/\.?0+$/, '');
+                            let parts = str.split('.');
+                            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                            quantityFormatted = parts[0] + (parts[1] ? '.' + parts[1] : '');
+                        }
+                    } else {
+                        let str = quantity.toFixed(2).replace(/\.?0+$/, '');
+                        let parts = str.split('.');
+                        parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                        quantityFormatted = parts[0] + (parts[1] ? '.' + parts[1] : '');
+                    }
+                    
+                    // Форматируем стоимость
+                    let usdStr = valueUsd.toFixed(2);
+                    let usdParts = usdStr.split('.');
+                    usdParts[0] = usdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                    const usdFormatted = usdParts[0] + (usdParts[1] ? '.' + usdParts[1] : '');
+                    
+                    let rubStr = Math.round(valueRub).toString();
+                    rubStr = rubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                    
+                    // Определяем иконку для актива
+                    let assetIcon = getAssetIcon(asset.symbol);
+                    
+                    html += `
+                        <div class="platform-asset-item" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; margin-right:20px; border-bottom: 1px solid var(--border-color, #edf2f7); cursor: pointer;" 
+                             onclick="selectTransferAssetFromBalance('${asset.asset_id}', '${asset.symbol}', '${asset.asset_type}', '${quantityFormatted}')"
+                             onmouseover="this.style.background='var(--bg-tertiary)'; this.style.borderRadius='8px'; this.style.paddingLeft='8px'; this.style.paddingRight='8px';" 
+                             onmouseout="this.style.background='transparent'; this.style.paddingLeft='0'; this.style.paddingRight='0';">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <div style="width: 28px; height: 28px; background: ${assetIcon.color}20; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                                    <i class="${assetIcon.icon}" style="color: ${assetIcon.color}; font-size: 14px;"></i>
+                                </div>
+                                <div>
+                                    <div style="font-weight: 500; font-size: 13px;">${asset.symbol}</div>
+                                    <div style="font-size: 10px; color: #6b7a8f;">${quantityFormatted}</div>
+                                </div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 12px; font-weight: 500;">$${usdFormatted}</div>
+                                <div style="font-size: 10px; color: #6b7a8f;">${rubStr} ₽</div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                assetsList.innerHTML = html;
+                totalDiv.style.display = 'block';
+                
+                // Форматируем общую стоимость для отображения в нижней части
+                totalUsdSpan.innerHTML = `$${totalUsdFormatted} (${totalRubStr} ₽)`;
+            }
+            
+            // Сохраняем данные для быстрого доступа
+            currentPlatformBalanceData = {
+                platformId: platformId,
+                platformName: platformName,
+                assets: assets,
+                totalUsd: totalUsd,
+                totalRub: totalRub
+            };
+            
+        } else {
+            assetsList.innerHTML = '<div style="text-align: center; padding: 15px; color: #e53e3e;">Ошибка загрузки баланса</div>';
+            totalDiv.style.display = 'none';
+        }
+    } catch (error) {
+        assetsList.innerHTML = '<div style="text-align: center; padding: 15px; color: #e53e3e;">Ошибка загрузки</div>';
+        totalDiv.style.display = 'none';
+    }
+}
+
+// Функция для сброса заголовка баланса
+function resetPlatformBalanceTitle() {
+    const balanceTitle = document.getElementById('platformBalanceTitle');
+    if (balanceTitle) {
+        balanceTitle.innerHTML = '<i class="fas fa-wallet"></i> Баланс площадки';
+    }
+}
+
+// Модифицируем функцию closeTransferModal для сброса заголовка
+function closeTransferModal() {
+    transferModal.classList.remove('active');
+    hidePlatformBalance();
+    resetPlatformBalanceTitle(); // Добавляем сброс заголовка
+    currentPlatformBalanceData = null;
+}
+
+// Функция для быстрого выбора актива из баланса
+function selectTransferAssetFromBalance(assetId, symbol, assetType, quantityFormatted) {
+    // Выбираем актив
+    selectAsset(assetId, symbol);
+    
+    // Показываем уведомление с количеством
+    //showNotification('info', 'Актив выбран', `${symbol}: доступно ${quantityFormatted}`);
+    
+    // Опционально: можно автоматически заполнить количество для перевода
+    const amountInput = document.getElementById('transferAmount');
+    if (amountInput) {
+        // Извлекаем числовое значение из отформатированной строки
+        const numericValue = parseFloat(quantityFormatted.replace(/\s/g, '').replace(',', '.'));
+        if (!isNaN(numericValue)) {
+            // Не заполняем автоматически, чтобы пользователь сам решил сколько переводить
+            // Но можно добавить кнопку "Перевести всё" позже
+        }
+    }
+}
+
+// Функция для скрытия блока баланса
+function hidePlatformBalance() {
+    const balanceBlock = document.getElementById('transferFromPlatformBalance');
+    if (balanceBlock) {
+        balanceBlock.style.display = 'none';
+    }
+}
+
+// Переменные для расходов
+let expenseCategories = [];
+
+function closeExpenseModal() {
+    const modal = document.getElementById('expenseModal');
+    if (modal) {
+        modal.classList.remove('active');
+        enableBodyScroll();
+    }
+}
+
+async function loadExpenseCategories() {
+    const container = document.getElementById('expenseCategoriesList');
+    console.log('loadExpenseCategories вызвана, container:', container);
+    if (!container) {
+        console.error('Контейнер expenseCategoriesList не найден');
+        return;
+    }
+    
+    container.innerHTML = '<div style="text-align: center; padding: 10px;"><i class="fas fa-spinner fa-spin"></i> Загрузка...</div>';
+    
+    try {
+        console.log('Отправляем запрос get_expense_categories...');
+        const formData = new FormData();
+        formData.append('action', 'get_expense_categories');
+        
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        console.log('Ответ от сервера:', result);
+        
+        if (result.success && result.categories) {
+            expenseCategories = result.categories;
+            console.log('Получено категорий:', result.categories.length);
+            
+            let html = '';
+            result.categories.forEach(cat => {
+                html += `
+                    <button type="button" class="expense-category-btn" data-category-id="${cat.id}" 
+                            style="flex: 1 1 auto; min-width: 80px; padding: 10px 12px; background: ${cat.color}20; border: 1px solid ${cat.color}; border-radius: 12px; font-size: 13px; font-weight: 500; color: ${cat.color}; cursor: pointer; transition: all 0.2s ease; text-align: center;"
+                            onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'"
+                            onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
+                        <i class="${cat.icon}"></i> ${cat.name_ru}
+                    </button>
+                `;
+            });
+            
+            container.innerHTML = html;
+            console.log('HTML установлен, кнопок:', document.querySelectorAll('.expense-category-btn').length);
+            
+            // Добавляем обработчики для категорий
+            document.querySelectorAll('.expense-category-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const categoryId = this.dataset.categoryId;
+                    console.log('Выбрана категория:', categoryId);
+                    
+                    // Убираем активный класс у всех
+                    document.querySelectorAll('.expense-category-btn').forEach(b => {
+                        b.style.background = '';
+                        b.style.fontWeight = '500';
+                    });
+                    
+                    // Добавляем активный класс выбранной
+                    this.style.background = this.style.borderColor + '30';
+                    this.style.fontWeight = '600';
+                    
+                    document.getElementById('expenseCategoryId').value = categoryId;
+                });
+            });
+        } else {
+            console.error('Ошибка в ответе:', result);
+            container.innerHTML = '<div style="text-align: center; padding: 10px; color: #e53e3e;">Нет категорий расходов</div>';
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки категорий:', error);
+        container.innerHTML = '<div style="text-align: center; padding: 10px; color: #e53e3e;">Ошибка загрузки категорий</div>';
+    }
+}
+
+
+
+// Функция открытия модального окна добавления категории
+function openAddExpenseCategoryModal() {
+    const modal = document.getElementById('addExpenseCategoryModal');
+    if (modal) {
+        modal.classList.add('active');
+        disableBodyScroll();
+        
+        // Сбрасываем поля
+        document.getElementById('newCategoryName').value = '';
+        document.getElementById('newCategoryNameRu').value = '';
+        document.getElementById('newCategoryIcon').value = 'fas fa-tag';
+        document.getElementById('newCategoryColor').value = '#ff9f4a';
+        
+        // Обновляем превью
+        updateCategoryPreview();
+    }
+}
+
+function closeAddExpenseCategoryModal() {
+    const modal = document.getElementById('addExpenseCategoryModal');
+    if (modal) {
+        modal.classList.remove('active');
+        enableBodyScroll();
+    }
+}
+
+// Обновление превью иконки и цвета
+function updateCategoryPreview() {
+    const icon = document.getElementById('newCategoryIcon').value;
+    const color = document.getElementById('newCategoryColor').value;
+    const previewIcon = document.querySelector('#iconPreview i');
+    const previewText = document.getElementById('iconPreviewText');
+    
+    if (previewIcon) {
+        // Разбиваем строку иконки (например "fas fa-tag")
+        const iconParts = icon.split(' ');
+        previewIcon.className = '';
+        iconParts.forEach(part => {
+            previewIcon.classList.add(part);
+        });
+        previewIcon.style.color = color;
+    }
+    if (previewText) {
+        previewText.textContent = icon;
+    }
+}
+
+// Функция сохранения категории
+async function saveExpenseCategory() {
+    const name = document.getElementById('newCategoryName').value.trim().toLowerCase();
+    const name_ru = document.getElementById('newCategoryNameRu').value.trim();
+    const icon = document.getElementById('newCategoryIcon').value.trim();
+    const color = document.getElementById('newCategoryColor').value;
+    
+    if (!name || !name_ru) {
+        showNotification('error', 'Ошибка', 'Заполните название категории');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('action', 'add_expense_category');
+    formData.append('name', name);
+    formData.append('name_ru', name_ru);
+    formData.append('icon', icon);
+    formData.append('color', color);
+    
+    try {
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('success', 'Успешно', result.message);
+            closeAddExpenseCategoryModal();
+            await loadExpenseCategories(); // Перезагружаем список категорий
+        } else {
+            showNotification('error', 'Ошибка', result.message);
+        }
+    } catch (error) {
+        showNotification('error', 'Ошибка сети', 'Не удалось добавить категорию');
+    }
+}
+
+// Функция выбора иконки
+function openIconSelectModal() {
+    const modal = document.getElementById('iconSelectModal');
+    if (modal) {
+        modal.classList.add('active');
+        disableBodyScroll();
+    }
+}
+
+function closeIconSelectModal() {
+    const modal = document.getElementById('iconSelectModal');
+    if (modal) {
+        modal.classList.remove('active');
+        enableBodyScroll();
+    }
+}
+
+function selectIcon(iconClass) {
+    document.getElementById('newCategoryIcon').value = iconClass;
+    updateCategoryPreview();
+    closeIconSelectModal();
+}
+
+function openExpenseModal() {
+    const modal = document.getElementById('expenseModal');
+    if (modal) {
+        modal.classList.add('active');
+        disableBodyScroll();
+        
+        // Устанавливаем дату
+        document.getElementById('expenseDate').value = new Date().toISOString().split('T')[0];
+        
+        // Сбрасываем поля
+        document.getElementById('expenseAmount').value = '';
+        document.getElementById('expenseDescription').value = '';
+        document.getElementById('expenseCategoryId').value = '';
+        
+        // Сбрасываем активные кнопки категорий
+        document.querySelectorAll('.expense-category-btn').forEach(btn => {
+            btn.style.background = '';
+            btn.style.fontWeight = '500';
+        });
+        
+        // Загружаем категории
+        loadExpenseCategories();
+    }
+}
+
+// Правильная версия saveExpense (использует category_id)
+async function saveExpense() {
+    const amount = parseFloat(document.getElementById('expenseAmount').value.replace(/\s/g, '').replace(',', '.')) || 0;
+    const currency_code = document.getElementById('selectedExpenseCurrencyDisplay').textContent;
+    const category_id = document.getElementById('expenseCategoryId').value;
+    const description = document.getElementById('expenseDescription').value;
+    const expense_date = document.getElementById('expenseDate').value;
+    
+    if (amount <= 0) {
+        showNotification('error', 'Ошибка', 'Введите корректную сумму');
+        return;
+    }
+    
+    if (!category_id) {
+        showNotification('error', 'Ошибка', 'Выберите категорию расхода');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('action', 'add_expense');
+    formData.append('amount', amount);
+    formData.append('currency_code', currency_code);
+    formData.append('category_id', category_id);
+    formData.append('description', description);
+    formData.append('expense_date', expense_date);
+    
+    try {
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('success', 'Успешно', result.message);
+            closeExpenseModal();
+        } else {
+            showNotification('error', 'Ошибка', result.message);
+        }
+    } catch (error) {
+        showNotification('error', 'Ошибка сети', 'Не удалось сохранить расход');
+    }
+}
+
+// Функция открытия списка расходов
+async function openExpensesListModal() {
+    const modal = document.getElementById('expensesListModal');
+    const body = document.getElementById('expensesListBody');
+    
+    if (!modal || !body) return;
+    
+    modal.classList.add('active');
+    disableBodyScroll();
+    body.innerHTML = '<div style="text-align: center; padding: 30px;"><i class="fas fa-spinner fa-spin"></i> Загрузка расходов...</div>';
+    
+    await loadExpensesList();
+}
+
+function closeExpensesListModal() {
+    const modal = document.getElementById('expensesListModal');
+    if (modal) {
+        modal.classList.remove('active');
+        enableBodyScroll();
+    }
+}
+
+// Функция загрузки списка расходов
+async function loadExpensesList() {
+    const body = document.getElementById('expensesListBody');
+    if (!body) return;
+    
+    const formData = new FormData();
+    formData.append('action', 'get_expenses');
+    formData.append('limit', 50);
+    formData.append('offset', 0);
+    
+    try {
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            displayExpensesList(result);
+        } else {
+            body.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">Ошибка загрузки расходов</div>';
+        }
+    } catch (error) {
+        body.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">Ошибка загрузки</div>';
+    }
+}
+
+// Функция отображения списка расходов
+function displayExpensesList(data) {
+    const body = document.getElementById('expensesListBody');
+    if (!body) return;
+    
+    const expenses = data.expenses;
+    const total = data.total;
+    const stats = data.stats;
+    
+    if (expenses.length === 0) {
+        body.innerHTML = `
+            <div style="text-align: center; padding: 40px;">
+                <i class="fas fa-receipt" style="font-size: 48px; opacity: 0.3; margin-bottom: 16px; display: block;"></i>
+                <p style="color: #6b7a8f;">Нет добавленных расходов</p>
+                <button class="add-order-btn" onclick="openExpenseModal()" style="margin-top: 15px;">
+                    <i class="fas fa-plus-circle"></i> Добавить расход
+                </button>
+            </div>
+        `;
+        return;
+    }
+    
+    // Формируем статистику
+    let statsHtml = `
+        <div style="background: var(--bg-tertiary); border-radius: 12px; padding: 15px; margin-bottom: 20px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                <span style="font-weight: 600;">Всего расходов:</span>
+                <span style="font-weight: 600; color: #ff9f4a;">${formatAmount(total, 'RUB')} ₽</span>
+            </div>
+            <div style="margin-top: 10px;">
+                <div style="font-size: 12px; color: #6b7a8f; margin-bottom: 8px;">По категориям:</div>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+    `;
+    
+    stats.forEach(stat => {
+        const category = expenseCategories.find(c => c.name === stat.category);
+        const color = category ? category.color : '#95a5a6';
+        statsHtml += `
+            <span style="background: ${color}20; color: ${color}; padding: 4px 10px; border-radius: 20px; font-size: 12px;">
+                ${category?.name_ru || stat.category}: ${formatAmount(stat.total_amount, 'RUB')} ₽
+            </span>
+        `;
+    });
+    
+    statsHtml += `
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Формируем список расходов
+    let expensesHtml = `
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+    `;
+    
+    expenses.forEach(expense => {
+        const category = expenseCategories.find(c => c.name === expense.category);
+        const icon = category?.icon || 'fas fa-receipt';
+        const color = category?.color || '#95a5a6';
+        const date = new Date(expense.expense_date).toLocaleDateString('ru-RU');
+        
+        expensesHtml += `
+            <div class="expense-item" style="display: flex; align-items: center; justify-content: space-between; padding: 12px; background: var(--bg-secondary); border-radius: 12px; border-left: 4px solid ${color};">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="width: 36px; height: 36px; background: ${color}20; border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                        <i class="${icon}" style="color: ${color};"></i>
+                    </div>
+                    <div>
+                        <div style="font-weight: 500;">${category?.name_ru || expense.category}</div>
+                        <div style="font-size: 12px; color: #6b7a8f;">${date}</div>
+                        ${expense.description ? `<div style="font-size: 11px; color: #6b7a8f; margin-top: 2px;">${escapeHtml(expense.description)}</div>` : ''}
+                    </div>
+                </div>
+                <div style="text-align: right;">
+                    <div style="font-weight: 600; color: #e53e3e;">- ${formatAmount(expense.amount, expense.currency_code)} ${expense.currency_code}</div>
+                    <button class="delete-expense-btn" data-id="${expense.id}" style="background: none; border: none; color: #95a5a6; cursor: pointer; margin-top: 4px; font-size: 12px;">
+                        <i class="fas fa-trash-alt"></i> Удалить
+                    </button>
+                </div>
+            </div>
+        `;
+    });
+    
+    expensesHtml += '</div>';
+    
+    body.innerHTML = statsHtml + expensesHtml;
+    
+    // Добавляем обработчики удаления
+    document.querySelectorAll('.delete-expense-btn').forEach(btn => {
+        btn.addEventListener('click', async function(e) {
+            e.stopPropagation();
+            const expenseId = this.dataset.id;
+            if (confirm('Удалить этот расход?')) {
+                await deleteExpense(expenseId);
+            }
+        });
+    });
+}
+
+// Функция удаления расхода
+async function deleteExpense(expenseId) {
+    const formData = new FormData();
+    formData.append('action', 'delete_expense');
+    formData.append('expense_id', expenseId);
+    
+    try {
+        const response = await fetch(window.location.href, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showNotification('success', 'Успешно', result.message);
+            await loadExpensesList(); // Перезагружаем список
+        } else {
+            showNotification('error', 'Ошибка', result.message);
+        }
+    } catch (error) {
+        showNotification('error', 'Ошибка сети', 'Не удалось удалить расход');
+    }
 }
 </script>
 </html>
