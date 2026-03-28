@@ -4,7 +4,12 @@ class Database {
     private $pdo;
     
     private function __construct() {
-        $config = require __DIR__ . '/config.php';
+        $configFile = __DIR__ . '/config.php';
+        if (!file_exists($configFile)) {
+            die("Config file not found: " . $configFile);
+        }
+        
+        $config = require $configFile;
         $db = $config['database'];
         
         try {
@@ -22,9 +27,5 @@ class Database {
             self::$instance = new self();
         }
         return self::$instance->pdo;
-    }
-    
-    public static function getPDO() {
-        return self::getInstance();
     }
 }
