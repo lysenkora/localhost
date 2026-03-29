@@ -1,28 +1,56 @@
 <?php
+// ============================================================================
+// КОНТРОЛЛЕР ОПЕРАЦИЙ
+// ============================================================================
+
 class OperationController {
+    private $pdo;
     private $operationRepo;
-    private $statisticsService;
+    private $platformRepo;
+    private $assetRepo;
+    private $depositRepo;
+    private $tradeRepo;
+    private $usdRubRate;
+    private $currentTheme;
     
     public function __construct($pdo) {
+        $this->pdo = $pdo;
         $this->operationRepo = new OperationRepository($pdo);
-        $this->statisticsService = new StatisticsService($pdo);
+        $this->platformRepo = new PlatformRepository($pdo);
+        $this->assetRepo = new AssetRepository($pdo);
+        $this->depositRepo = new DepositRepository($pdo);
+        $this->tradeRepo = new TradeRepository($pdo);
+        
+        $this->usdRubRate = getUsdRubRate($pdo);
+        $this->currentTheme = getUserTheme($pdo);
     }
     
-    public function index() {
-        $page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
-        $per_page = 20;
+    /**
+     * Получение данных для страницы операций
+     */
+    public function getOperationsData($page = 1, $filters = []) {
+        $perPage = 20;
         
-        $operations = $this->operationRepo->getPaginated($page, $per_page);
-        $total = $this->operationRepo->getTotalCount();
-        $total_pages = ceil($total / $per_page);
+        $operationsData = $this->operationRepo->getAll($filters, $page, $perPage);
         
-        // Получаем тему
-        $pdo = Database::getInstance();
-        $stmt = $pdo->prepare("SELECT setting_value FROM user_settings WHERE setting_key = 'theme'");
-        $stmt->execute();
-        $theme_data = $stmt->fetch();
-        $current_theme = $theme_data ? $theme_data['setting_value'] : 'light';
+        $depositStats = $this->depositRepo->getStats();
+        $tradeStats = $this->tradeRepo->getStats();
         
-        require_once __DIR__ . '/../views/operations.php';
+        $platforms = $this->platformRepo->getAll();
+        $assets = $this->assetRepo->getAll();
+        
+        return [
+            'operations' => $operationsData['operations'],
+            'total' => $operationsData['total'],
+            'total_pages' => $operationsData['total_pages'],
+            'deposit_stats' => $depositStats,
+            'trade_stats' => $tradeStats,
+            'platforms' => $platforms,
+            'assets' => $assets,
+            'usd_rub_rate' => $this->usdRubRate,
+            'current_theme' => $this->currentTheme,
+            'current_page' => $page,
+            'filters' => $filters
+        ];
     }
 }

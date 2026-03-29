@@ -1,31 +1,47 @@
 <?php
+// ============================================================================
+// КОНФИГУРАЦИЯ БАЗЫ ДАННЫХ
+// ============================================================================
+
 class Database {
     private static $instance = null;
     private $pdo;
     
+    private $host = 'localhost';
+    private $dbname = 'investment_portfolio';
+    private $username = 'root';
+    private $password = '';
+    
     private function __construct() {
-        $configFile = __DIR__ . '/config.php';
-        if (!file_exists($configFile)) {
-            die("Config file not found: " . $configFile);
-        }
-        
-        $config = require $configFile;
-        $db = $config['database'];
-        
         try {
-            $dsn = "mysql:host={$db['host']};dbname={$db['dbname']};charset={$db['charset']}";
-            $this->pdo = new PDO($dsn, $db['username'], $db['password']);
-            $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-            $this->pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+            $this->pdo = new PDO(
+                "mysql:host={$this->host};dbname={$this->dbname};charset=utf8mb4",
+                $this->username,
+                $this->password,
+                [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_EMULATE_PREPARES => false
+                ]
+            );
         } catch (PDOException $e) {
-            die("Database connection failed: " . $e->getMessage());
+            die("Ошибка подключения к БД: " . $e->getMessage());
         }
     }
     
     public static function getInstance() {
         if (self::$instance === null) {
-            self::$instance = new self();
+            self::$instance = new Database();
         }
-        return self::$instance->pdo;
+        return self::$instance;
     }
+    
+    public function getConnection() {
+        return $this->pdo;
+    }
+}
+
+// Для обратной совместимости с существующим кодом
+function getDbConnection() {
+    return Database::getInstance()->getConnection();
 }

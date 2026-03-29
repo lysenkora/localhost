@@ -1,59 +1,85 @@
 <?php
+// ============================================================================
+// КЛАСС ДЛЯ ФОРМАТИРОВАНИЯ ДАННЫХ
+// ============================================================================
+
 class Formatter {
     
-    public static function number($value, $decimals = 2) {
-        if ($value === null) return '0';
+    /**
+     * Форматирование количества актива
+     */
+    public static function quantity($value, $type = 'crypto') {
+        if ($value === null || $value === '') return '0';
+        $num = (float)$value;
         
-        $formatted = number_format((float)$value, $decimals, '.', '');
-        $parts = explode('.', $formatted);
-        $parts[0] = number_format((int)$parts[0], 0, '', ' ');
-        
-        if ($decimals > 0 && isset($parts[1]) && (int)$parts[1] > 0) {
-            return $parts[0] . '.' . rtrim($parts[1], '0');
-        }
-        return $parts[0];
-    }
-    
-    public static function currency($value, $currency = 'USD', $decimals = null) {
-        if ($value === null) return '—';
-        
-        $isCrypto = in_array($currency, ['BTC', 'ETH', 'SOL', 'USDT', 'USDC']);
-        $decimals = $decimals ?? ($isCrypto ? 6 : 2);
-        
-        $formatted = self::number($value, $decimals);
-        
-        $symbols = [
-            'RUB' => '₽',
-            'USD' => '$',
-            'EUR' => '€',
-            'BTC' => '₿',
-            'ETH' => 'Ξ',
-            'USDT' => '₮'
-        ];
-        
-        $symbol = $symbols[$currency] ?? $currency;
-        
-        if ($currency === 'RUB') {
-            return $formatted . ' ' . $symbol;
-        }
-        return $symbol . $formatted;
-    }
-    
-    public static function date($date, $format = 'd.m.Y') {
-        if (!$date) return '';
-        $timestamp = is_string($date) ? strtotime($date) : $date;
-        return date($format, $timestamp);
-    }
-    
-    public static function quantity($value, $symbol, $isCrypto = false) {
-        if ($value === null) return '0';
-        
-        if ($isCrypto || in_array($symbol, ['BTC', 'ETH', 'SOL', 'USDT', 'USDC'])) {
-            $decimals = 6;
-        } else {
-            $decimals = 2;
+        if ($type === 'crypto') {
+            if (floor($num) == $num) {
+                return number_format($num, 0, '.', ' ');
+            }
+            $formatted = number_format($num, 8, '.', ' ');
+            return rtrim(rtrim($formatted, '0'), '.');
         }
         
-        return self::number($value, $decimals);
+        if ($type === 'stock' || $type === 'etf') {
+            return number_format($num, 0, '.', ' ') . ' шт';
+        }
+        
+        return number_format($num, 2, '.', ' ');
+    }
+    
+    /**
+     * Форматирование цены
+     */
+    public static function price($value, $currency = null) {
+        if ($value === null || $value === '') return '—';
+        $num = (float)$value;
+        
+        $formatted = number_format($num, 2, '.', ' ');
+        $formatted = preg_replace('/\.?0+$/', '', $formatted);
+        
+        return $currency ? "{$formatted} {$currency}" : $formatted;
+    }
+    
+    /**
+     * Форматирование стоимости
+     */
+    public static function value($value, $currency = 'USD') {
+        if ($value === null || $value === '') return '0';
+        $num = (float)$value;
+        
+        $formatted = number_format($num, 2, '.', ' ');
+        $formatted = preg_replace('/\.?0+$/', '', $formatted);
+        
+        if ($currency === 'USD') return "$" . $formatted;
+        if ($currency === 'RUB') return $formatted . " ₽";
+        return "{$formatted} {$currency}";
+    }
+    
+    /**
+     * Форматирование процентов
+     */
+    public static function percent($value) {
+        if ($value === null) return '0%';
+        $num = (float)$value;
+        $formatted = number_format($num, 1, '.', ' ');
+        return ($num > 0 ? '+' : '') . $formatted . '%';
+    }
+    
+    /**
+     * Получение класса для доходности
+     */
+    public static function profitClass($value) {
+        if ($value > 0) return 'positive';
+        if ($value < 0) return 'negative';
+        return 'neutral';
+    }
+    
+    /**
+     * Получение иконки для доходности
+     */
+    public static function profitIcon($value) {
+        if ($value > 0) return 'fa-arrow-up';
+        if ($value < 0) return 'fa-arrow-down';
+        return 'fa-minus';
     }
 }
