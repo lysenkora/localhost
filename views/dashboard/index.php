@@ -1320,6 +1320,556 @@ $investedRubFormatted = number_format($profit['invested_rub'], 0, '.', ' ');
         </div>
     </div>
 
+    <!-- Модальное окно пополнения -->
+    <div class="modal-overlay" id="depositModal">
+        <div class="modal" style="max-width: 450px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-plus-circle" style="color: #00a86b;"></i> Пополнение</h2>
+                <button class="modal-close" onclick="closeDepositModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="depositForm">
+                    <div class="form-group">
+                        <label><i class="fas fa-building"></i> Площадка *</label>
+                        <button type="button" class="platform-select-btn" id="selectPlatformBtn" style="width: 100%; justify-content: space-between; margin-bottom: 10px;">
+                            <span id="selectedPlatformDisplay">Выбрать площадку</span>
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="depositPopularPlatforms"></div>
+                        <input type="hidden" id="depositPlatformId" value="">
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="fas fa-coins"></i> Сумма пополнения *</label>
+                        <div class="currency-input-group" style="margin-bottom: 10px;">
+                            <input type="text" class="form-input" id="depositAmount" placeholder="0" inputmode="numeric">
+                            <button type="button" class="currency-select-btn" id="selectCurrencyBtn">
+                                <span id="selectedCurrencyDisplay">RUB</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                        </div>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="depositPopularCurrencies"></div>
+                        <input type="hidden" id="depositCurrency" value="RUB">
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="far fa-calendar-alt"></i> Дата пополнения</label>
+                        <input type="date" class="form-input" id="depositDate" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeDepositModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="confirmDeposit()" style="background: #00a86b;">
+                    <i class="fas fa-check-circle"></i> Пополнить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно Покупка/Продажа -->
+    <div class="modal-overlay" id="tradeModal">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2 id="tradeModalTitle"><i class="fas fa-arrow-down" style="color: #00a86b;"></i> <span id="tradeModalTitleText">Покупка</span></h2>
+                <button class="modal-close" onclick="closeTradeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="tradeForm">
+                    <input type="hidden" id="tradeOperationType" value="buy">
+
+                    <div class="form-group">
+                        <label><i class="fas fa-building"></i> Площадка покупки *</label>
+                        <button type="button" class="platform-select-btn" id="selectTradePlatformBtn" style="width: 100%; justify-content: space-between; margin-bottom: 10px;">
+                            <span id="selectedTradePlatformDisplay">Выбрать площадку</span>
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="tradePopularPlatforms"></div>
+                        <input type="hidden" id="tradePlatformId" value="">
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="fas fa-coins"></i> Актив и количество *</label>
+                        <div class="currency-input-group" style="margin-bottom: 10px;">
+                            <input type="text" class="form-input" id="tradeQuantity" placeholder="0" inputmode="numeric" style="text-align: right;">
+                            <button type="button" class="currency-select-btn" id="selectTradeAssetBtn">
+                                <span id="selectedTradeAssetDisplay">Выбрать</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                        </div>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;" id="tradePopularAssets"></div>
+                        <input type="hidden" id="tradeAssetId" value="">
+                        <input type="hidden" id="tradeAssetType" value="">
+                    </div>
+
+                    <div class="form-group" id="tradeFromPlatformGroup">
+                        <label><i class="fas fa-arrow-right"></i> Площадка списания *</label>
+                        <button type="button" class="platform-select-btn" id="selectTradeFromPlatformBtn" style="width: 100%; justify-content: space-between; margin-bottom: 10px;">
+                            <span id="selectedTradeFromPlatformDisplay">Выбрать площадку</span>
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="tradeFromPopularPlatforms"></div>
+                        <input type="hidden" id="tradeFromPlatformId" value="">
+                    </div>
+
+                    <div id="tradeCryptoNetworkSection" style="display: none;">
+                        <div class="form-group">
+                            <label><i class="fas fa-network-wired"></i> Сеть</label>
+                            <button type="button" class="platform-select-btn" id="selectTradeNetworkBtn" style="width: 100%; justify-content: space-between;">
+                                <span id="selectedTradeNetworkDisplay">Выбрать сеть</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                            <input type="hidden" id="tradeNetwork" value="">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="fas fa-tag"></i> Цена за ед. *</label>
+                        <div class="currency-input-group">
+                            <input type="text" class="form-input" id="tradePrice" placeholder="0" inputmode="numeric" style="text-align: right;">
+                            <button type="button" class="currency-select-btn" id="selectTradePriceCurrencyBtn">
+                                <span id="selectedTradePriceCurrencyDisplay">Выбрать</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                        </div>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="tradePopularPriceCurrencies"></div>
+                        <input type="hidden" id="tradePriceCurrency" value="">
+                    </div>
+
+                    <div class="form-row" style="margin-top: 10px;">
+                        <div class="form-group">
+                            <label><i class="fas fa-percent"></i> Комиссия</label>
+                            <div class="currency-input-group">
+                                <input type="text" class="form-input" id="tradeCommission" placeholder="0" inputmode="numeric" style="text-align: right;">
+                                <button type="button" class="currency-select-btn" id="selectTradeCommissionCurrencyBtn">
+                                    <span id="selectedTradeCommissionCurrencyDisplay">Выбрать</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                            <input type="hidden" id="tradeCommissionCurrency" value="">
+                        </div>
+
+                        <div class="form-group">
+                            <label><i class="fas fa-calculator"></i> Итого</label>
+                            <input type="text" class="form-input" id="tradeTotal" value="0" style="width: 100%; background: var(--bg-tertiary); text-align: center; font-weight: 600; font-size: 18px;" readonly>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="far fa-calendar-alt"></i> Дата операции</label>
+                        <input type="date" class="form-input" id="tradeDate" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="far fa-sticky-note"></i> Комментарий</label>
+                        <textarea class="form-input" id="tradeNotes" rows="2"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeTradeModal()">Отмена</button>
+                <button class="btn btn-primary" id="confirmTradeBtn" onclick="confirmTrade()" style="background: #00a86b;">
+                    <i class="fas fa-check-circle"></i> <span id="confirmTradeBtnText">Купить</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно Перевода -->
+    <div class="modal-overlay" id="transferModal">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-exchange-alt" style="color: #ff9f4a;"></i> Перевод</h2>
+                <button class="modal-close" onclick="closeTransferModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="transferForm">
+                    <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div class="form-group">
+                            <label>Откуда *</label>
+                            <button type="button" class="platform-select-btn" id="selectFromPlatformBtn" style="width: 100%; justify-content: space-between;">
+                                <span id="selectedFromPlatformDisplay">Выбрать площадку</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                            <input type="hidden" id="transferFromPlatformId" value="">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Куда *</label>
+                            <button type="button" class="platform-select-btn" id="selectToPlatformBtn" style="width: 100%; justify-content: space-between;">
+                                <span id="selectedToPlatformDisplay">Выбрать площадку</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                            <input type="hidden" id="transferToPlatformId" value="">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="fas fa-coins"></i> Что переводим *</label>
+                        <div class="currency-input-group" style="margin-bottom: 10px;">
+                            <input type="text" class="form-input" id="transferAmount" placeholder="0" inputmode="numeric" style="text-align: right;">
+                            <button type="button" class="currency-select-btn" id="selectAssetBtn">
+                                <span id="selectedAssetDisplay">Выбрать</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                        </div>
+                        <input type="hidden" id="transferAssetId" value="">
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="fas fa-percent"></i> Комиссия</label>
+                        <div class="currency-input-group">
+                            <input type="text" class="form-input" id="transferCommission" placeholder="0" inputmode="numeric" style="text-align: right;">
+                            <button type="button" class="currency-select-btn" id="selectCommissionCurrencyBtn">
+                                <span id="selectedCommissionCurrencyDisplay">Выбрать</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                        </div>
+                        <input type="hidden" id="transferCommissionCurrency" value="">
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="far fa-calendar-alt"></i> Дата перевода</label>
+                        <input type="date" class="form-input" id="transferDate">
+                    </div>
+
+                    <div class="form-group">
+                        <label><i class="far fa-sticky-note"></i> Комментарий</label>
+                        <textarea class="form-input" id="transferNotes" rows="2"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeTransferModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="confirmTransfer()" style="background: #ff9f4a;">
+                    <i class="fas fa-exchange-alt"></i> Перевести
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно расходов -->
+    <div class="modal-overlay" id="expenseModal">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-receipt" style="color: #ff9f4a;"></i> Добавить расход</h2>
+                <button class="modal-close" onclick="closeExpenseModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="expenseForm">
+                    <div class="form-group">
+                        <label><i class="fas fa-tag"></i> Сумма *</label>
+                        <div class="currency-input-group">
+                            <input type="text" class="form-input" id="expenseAmount" placeholder="0" inputmode="numeric">
+                            <button type="button" class="currency-select-btn" id="selectExpenseCurrencyBtn">
+                                <span id="selectedExpenseCurrencyDisplay">RUB</span>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label><i class="fas fa-category"></i> Категория *</label>
+                        <div id="expenseCategoriesList" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 5px;"></div>
+                        <input type="hidden" id="expenseCategoryId" value="">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label><i class="fas fa-align-left"></i> Описание</label>
+                        <textarea class="form-input" id="expenseDescription" rows="2" placeholder="Например: продукты, такси, ресторан..."></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label><i class="far fa-calendar-alt"></i> Дата расхода</label>
+                        <input type="date" class="form-input" id="expenseDate" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeExpenseModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="saveExpense()" style="background: #ff9f4a;">
+                    <i class="fas fa-save"></i> Сохранить расход
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно выбора площадки -->
+    <div class="modal-overlay" id="platformSelectModal">
+        <div class="modal" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-building" style="color: #1a5cff;"></i> Выберите площадку</h2>
+                <button class="modal-close" onclick="closePlatformModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <input type="text" class="form-input" id="platformSearch" placeholder="Поиск или добавление площадки..." autocomplete="off">
+                </div>
+                <div id="allPlatformsList" style="max-height: 250px; overflow-y: auto; margin-top: 8px; border: 1px solid #edf2f7; border-radius: 12px; padding: 8px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно выбора валюты/актива -->
+    <div class="modal-overlay" id="currencySelectModal">
+        <div class="modal" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-coins" style="color: #1a5cff;"></i> Выберите валюту</h2>
+                <button class="modal-close" onclick="closeCurrencyModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <input type="text" class="form-input" id="currencySearch" placeholder="Поиск или добавление..." autocomplete="off">
+                </div>
+                <div id="allCurrenciesList" style="max-height: 250px; overflow-y: auto; margin-top: 8px; border: 1px solid #edf2f7; border-radius: 12px; padding: 8px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно выбора сети -->
+    <div class="modal-overlay" id="networkSelectModal">
+        <div class="modal" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-network-wired" style="color: #ff9f4a;"></i> Выберите сеть</h2>
+                <button class="modal-close" onclick="closeNetworkModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <input type="text" class="form-input" id="networkSearch" placeholder="Поиск или добавление сети..." autocomplete="off">
+                </div>
+                <div id="allNetworksList" style="max-height: 250px; overflow-y: auto; margin-top: 8px; border: 1px solid #edf2f7; border-radius: 12px; padding: 8px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно добавления площадки -->
+    <div class="modal-overlay" id="addPlatformModal">
+        <div class="modal" style="max-width: 450px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-plus-circle" style="color: #1a5cff;"></i> Добавление площадки</h2>
+                <button class="modal-close" onclick="closeAddPlatformModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addPlatformForm">
+                    <div class="form-group">
+                        <label><i class="fas fa-tag"></i> Название площадки *</label>
+                        <input type="text" class="form-input" id="newPlatformName" placeholder="Например: Binance, Bybit, Т-Банк">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-sitemap"></i> Тип площадки *</label>
+                        <div class="platform-type-buttons">
+                            <button type="button" class="platform-type-btn" data-type="exchange" onclick="setActivePlatformType('exchange')">Биржа</button>
+                            <button type="button" class="platform-type-btn" data-type="broker" onclick="setActivePlatformType('broker')">Брокер</button>
+                            <button type="button" class="platform-type-btn" data-type="bank" onclick="setActivePlatformType('bank')">Банк</button>
+                            <button type="button" class="platform-type-btn" data-type="wallet" onclick="setActivePlatformType('wallet')">Кошелек</button>
+                            <button type="button" class="platform-type-btn" data-type="other" onclick="setActivePlatformType('other')">Другое</button>
+                        </div>
+                        <input type="hidden" id="newPlatformType" value="">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-globe"></i> Страна</label>
+                        <input type="text" class="form-input" id="newPlatformCountry" placeholder="Например: Россия, США, Китай">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeAddPlatformModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="saveNewPlatform()" style="background: #1a5cff;">
+                    <i class="fas fa-save"></i> Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно добавления валюты -->
+    <div class="modal-overlay" id="addCurrencyModal">
+        <div class="modal" style="max-width: 450px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-plus-circle" style="color: #1a5cff;"></i> Добавление валюты</h2>
+                <button class="modal-close" onclick="closeAddCurrencyModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addCurrencyForm">
+                    <div class="form-group">
+                        <label><i class="fas fa-tag"></i> Код валюты *</label>
+                        <input type="text" class="form-input" id="newCurrencyCode" placeholder="Например: RUB, USD, EUR, BTC">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-font"></i> Название валюты *</label>
+                        <input type="text" class="form-input" id="newCurrencyName" placeholder="Например: Российский рубль, Доллар США">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-sitemap"></i> Тип валюты *</label>
+                        <div class="currency-type-buttons">
+                            <button type="button" class="currency-type-btn" data-type="fiat" onclick="setActiveCurrencyType('fiat')">Фиатная</button>
+                            <button type="button" class="currency-type-btn" data-type="crypto" onclick="setActiveCurrencyType('crypto')">Криптовалюта</button>
+                        </div>
+                        <input type="hidden" id="newCurrencyType" value="">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeAddCurrencyModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="saveNewCurrency()" style="background: #1a5cff;">
+                    <i class="fas fa-save"></i> Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно добавления актива -->
+    <div class="modal-overlay" id="addAssetModal">
+        <div class="modal" style="max-width: 450px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-plus-circle" style="color: #ff9f4a;"></i> Добавление актива</h2>
+                <button class="modal-close" onclick="closeAddAssetModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="addAssetForm">
+                    <div class="form-group">
+                        <label><i class="fas fa-tag"></i> Символ актива *</label>
+                        <input type="text" class="form-input" id="newAssetSymbol" placeholder="Например: BTC, ETH, AAPL">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-font"></i> Название актива *</label>
+                        <input type="text" class="form-input" id="newAssetName" placeholder="Например: Bitcoin, Ethereum, Apple Inc.">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-sitemap"></i> Тип актива *</label>
+                        <div class="asset-type-buttons">
+                            <button type="button" class="asset-type-btn" data-type="crypto" onclick="setActiveAssetType('crypto')">Криптовалюта</button>
+                            <button type="button" class="asset-type-btn" data-type="stock" onclick="setActiveAssetType('stock')">Акция</button>
+                            <button type="button" class="asset-type-btn" data-type="etf" onclick="setActiveAssetType('etf')">ETF</button>
+                            <button type="button" class="asset-type-btn" data-type="currency" onclick="setActiveAssetType('currency')">Валюта</button>
+                        </div>
+                        <input type="hidden" id="newAssetType" value="">
+                    </div>
+                    <div class="form-group" id="sectorSelectGroup" style="display: none;">
+                        <label><i class="fas fa-chart-line"></i> Сектор *</label>
+                        <div class="sector-buttons" id="sectorButtons">
+                            <!-- Сектора будут добавлены через PHP -->
+                        </div>
+                        <input type="hidden" id="newAssetSector" value="">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeAddAssetModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="saveNewAsset()" style="background: #ff9f4a;">
+                    <i class="fas fa-save"></i> Сохранить
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно заметок -->
+    <div class="modal-overlay" id="noteModal">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-sticky-note" style="color: #ff9f4a;"></i> <span id="noteModalTitleText">Добавить заметку</span></h2>
+                <button class="modal-close" onclick="closeNoteModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="noteForm">
+                    <input type="hidden" id="noteId" value="">
+                    <div class="form-group">
+                        <label><i class="fas fa-heading"></i> Заголовок</label>
+                        <input type="text" class="form-input" id="noteTitle" placeholder="Краткий заголовок заметки">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-align-left"></i> Содержание *</label>
+                        <textarea class="form-input" id="noteContent" rows="4" placeholder="Введите текст заметки..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-tag"></i> Тип заметки</label>
+                        <div class="note-type-buttons" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button type="button" class="platform-type-btn note-type-option" data-type="general" onclick="document.getElementById('noteType').value='general'; document.getElementById('reminderDateGroup').style.display='none';">📝 Обычная</button>
+                            <button type="button" class="platform-type-btn note-type-option" data-type="reminder" onclick="document.getElementById('noteType').value='reminder'; document.getElementById('reminderDateGroup').style.display='block';">📌 Напоминание</button>
+                            <button type="button" class="platform-type-btn note-type-option" data-type="idea" onclick="document.getElementById('noteType').value='idea'; document.getElementById('reminderDateGroup').style.display='none';">💡 Идея</button>
+                            <button type="button" class="platform-type-btn note-type-option" data-type="important" onclick="document.getElementById('noteType').value='important'; document.getElementById('reminderDateGroup').style.display='none';">⚠️ Важное</button>
+                        </div>
+                        <input type="hidden" id="noteType" value="general">
+                    </div>
+                    <div class="form-group" id="reminderDateGroup" style="display: none;">
+                        <label><i class="far fa-calendar-alt"></i> Дата напоминания</label>
+                        <input type="date" class="form-input" id="noteReminderDate">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeNoteModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="saveNote()" style="background: #ff9f4a;">
+                    <i class="fas fa-save"></i> <span id="confirmNoteBtnText">Сохранить</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно лимитных ордеров -->
+    <div class="modal-overlay" id="limitOrderModal">
+        <div class="modal" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-clock" style="color: #ff9f4a;"></i> Лимитный ордер</h2>
+                <button class="modal-close" onclick="closeLimitOrderModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="limitOrderForm">
+                    <input type="hidden" id="limitOrderOperationType" value="buy">
+                    <div class="form-group">
+                        <label><i class="fas fa-sitemap"></i> Тип операции</label>
+                        <div style="display: flex; gap: 10px;">
+                            <button type="button" class="platform-type-btn limit-type-btn" data-type="buy" onclick="document.getElementById('limitOrderOperationType').value='buy'" style="flex:1; background:#00a86b; color:white;">Покупка</button>
+                            <button type="button" class="platform-type-btn limit-type-btn" data-type="sell" onclick="document.getElementById('limitOrderOperationType').value='sell'" style="flex:1; background:#e53e3e; color:white;">Продажа</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-building"></i> Площадка *</label>
+                        <button type="button" class="platform-select-btn" id="selectLimitPlatformBtn" style="width: 100%; justify-content: space-between;">
+                            <span id="selectedLimitPlatformDisplay">Выбрать площадку</span>
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                        <input type="hidden" id="limitPlatformId" value="">
+                    </div>
+                    <div class="form-group">
+                        <label><i class="fas fa-coins"></i> Актив *</label>
+                        <button type="button" class="platform-select-btn" id="selectLimitAssetBtn" style="width: 100%; justify-content: space-between;">
+                            <span id="selectedLimitAssetDisplay">Выбрать актив</span>
+                            <i class="fas fa-chevron-down"></i>
+                        </button>
+                        <input type="hidden" id="limitAssetId" value="">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label><i class="fas fa-balance-scale"></i> Количество *</label>
+                            <input type="text" class="form-input" id="limitQuantity" placeholder="0" inputmode="numeric">
+                        </div>
+                        <div class="form-group">
+                            <label><i class="fas fa-tag"></i> Лимитная цена *</label>
+                            <div class="currency-input-group">
+                                <input type="text" class="form-input" id="limitPrice" placeholder="0" inputmode="numeric" style="text-align: right;">
+                                <button type="button" class="currency-select-btn" id="selectLimitCurrencyBtn">
+                                    <span id="selectedLimitCurrencyDisplay">Выбрать</span>
+                                    <i class="fas fa-chevron-down"></i>
+                                </button>
+                            </div>
+                            <input type="hidden" id="limitCurrency" value="">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label><i class="far fa-calendar-alt"></i> Действителен до</label>
+                        <input type="date" class="form-input" id="limitExpiryDate">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeLimitOrderModal()">Отмена</button>
+                <button class="btn btn-primary" onclick="confirmLimitOrder()" style="background: #ff9f4a;">
+                    <i class="fas fa-clock"></i> Разместить ордер
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Подключение JavaScript -->
     <script>
         // Передаем данные из PHP в JS

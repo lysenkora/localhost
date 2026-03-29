@@ -77,6 +77,58 @@ const modalColorSchemes = {
 };
 
 // ============================================================================
+// ОТЛАДКА
+// ============================================================================
+console.log('=== app.js загружен ===');
+console.log('Время:', new Date().toLocaleTimeString());
+
+// Проверяем функции
+console.log('openBuyModal:', typeof openBuyModal);
+console.log('openSellModal:', typeof openSellModal);
+console.log('openDepositModal:', typeof openDepositModal);
+console.log('openTransferModal:', typeof openTransferModal);
+console.log('openExpenseModal:', typeof openExpenseModal);
+
+// Проверяем кнопки в DOM
+setTimeout(() => {
+    console.log('=== Проверка кнопок после загрузки DOM ===');
+    const buyBtns = document.querySelectorAll('.operation-type-btn[data-type="buy"]');
+    const sellBtns = document.querySelectorAll('.operation-type-btn[data-type="sell"]');
+    const depositBtns = document.querySelectorAll('.operation-type-btn[data-type="deposit"]');
+    const transferBtns = document.querySelectorAll('.operation-type-btn[data-type="transfer"]');
+    const expenseBtns = document.querySelectorAll('.operation-type-btn[data-type="expense"]');
+    
+    console.log('Кнопок "Покупка":', buyBtns.length);
+    console.log('Кнопок "Продажа":', sellBtns.length);
+    console.log('Кнопок "Пополнить":', depositBtns.length);
+    console.log('Кнопок "Перевод":', transferBtns.length);
+    console.log('Кнопок "Расходы":', expenseBtns.length);
+    
+    // Проверяем атрибуты у первой кнопки "Покупка"
+    if (buyBtns[0]) {
+        console.log('Атрибуты кнопки "Покупка":', {
+            'data-type': buyBtns[0].getAttribute('data-type'),
+            'onclick': buyBtns[0].getAttribute('onclick'),
+            'class': buyBtns[0].className
+        });
+    }
+}, 500);
+
+// Перехватываем клики на все кнопки
+document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.operation-type-btn');
+    if (btn) {
+        console.log('=== КЛИК ПО КНОПКЕ ===');
+        console.log('Тип кнопки (data-type):', btn.getAttribute('data-type'));
+        console.log('Текст кнопки:', btn.textContent);
+        console.log('Есть onclick атрибут:', btn.hasAttribute('onclick'));
+        if (btn.hasAttribute('onclick')) {
+            console.log('onclick значение:', btn.getAttribute('onclick'));
+        }
+    }
+}, true);
+
+// ============================================================================
 // ФУНКЦИИ УВЕДОМЛЕНИЙ
 // ============================================================================
 
@@ -974,10 +1026,24 @@ async function confirmDeposit() {
 }
 
 function openBuyModal() {
-    openTradeModal('buy');
+    console.log('=== openBuyModal ВЫЗВАНА ===');
+    const modal = document.getElementById('tradeModal');
+    console.log('Модальное окно tradeModal найдено:', !!modal);
+    if (modal) {
+        document.getElementById('tradeOperationType').value = 'buy';
+        document.getElementById('tradeModalTitle').innerHTML = '<i class="fas fa-arrow-down" style="color: #00a86b;"></i> Покупка';
+        document.getElementById('confirmTradeBtn').style.background = '#00a86b';
+        document.getElementById('confirmTradeBtnText').textContent = 'Купить';
+        document.getElementById('tradeFromPlatformGroup').style.display = 'block';
+        document.getElementById('tradeDate').value = new Date().toISOString().split('T')[0];
+        modal.classList.add('active');
+    } else {
+        console.error('Модальное окно tradeModal НЕ НАЙДЕНО!');
+    }
 }
 
 function openSellModal() {
+    console.log('=== openSellModal ВЫЗВАНА ===');
     openTradeModal('sell');
 }
 
@@ -1144,26 +1210,33 @@ async function confirmTrade() {
 }
 
 function openTransferModal() {
+    console.log('=== openTransferModal ВЫЗВАНА ===');
     const modal = document.getElementById('transferModal');
+    console.log('Модальное окно transferModal найдено:', !!modal);
     if (modal) {
-        modal.classList.add('active');
-        document.getElementById('transferDate').value = new Date().toISOString().split('T')[0];
-        document.getElementById('transferAmount').value = '';
-        document.getElementById('transferCommission').value = '';
-        document.getElementById('selectedAssetDisplay').textContent = 'Выбрать';
-        document.getElementById('selectedFromPlatformDisplay').textContent = 'Выбрать площадку';
-        document.getElementById('selectedToPlatformDisplay').textContent = 'Выбрать площадку';
-        document.getElementById('selectedCommissionCurrencyDisplay').textContent = 'Выбрать';
-        document.getElementById('transferAssetId').value = '';
-        document.getElementById('transferFromPlatformId').value = '';
-        document.getElementById('transferToPlatformId').value = '';
-        document.getElementById('transferCommissionCurrency').value = '';
-        document.getElementById('transferNetworkFrom').value = '';
-        document.getElementById('transferNetworkTo').value = '';
-        document.getElementById('transferNotes').value = '';
-        document.getElementById('transferCryptoNetworkSection').style.display = 'none';
-        hidePlatformBalance();
-        currentPlatformBalanceData = null;
+        const modal = document.getElementById('transferModal');
+        if (modal) {
+            modal.classList.add('active');
+            document.getElementById('transferDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('transferAmount').value = '';
+            document.getElementById('transferCommission').value = '';
+            document.getElementById('selectedAssetDisplay').textContent = 'Выбрать';
+            document.getElementById('selectedFromPlatformDisplay').textContent = 'Выбрать площадку';
+            document.getElementById('selectedToPlatformDisplay').textContent = 'Выбрать площадку';
+            document.getElementById('selectedCommissionCurrencyDisplay').textContent = 'Выбрать';
+            document.getElementById('transferAssetId').value = '';
+            document.getElementById('transferFromPlatformId').value = '';
+            document.getElementById('transferToPlatformId').value = '';
+            document.getElementById('transferCommissionCurrency').value = '';
+            document.getElementById('transferNetworkFrom').value = '';
+            document.getElementById('transferNetworkTo').value = '';
+            document.getElementById('transferNotes').value = '';
+            document.getElementById('transferCryptoNetworkSection').style.display = 'none';
+            hidePlatformBalance();
+            currentPlatformBalanceData = null;
+        }
+    } else {
+        console.error('Модальное окно transferModal НЕ НАЙДЕНО!');
     }
 }
 
@@ -1512,15 +1585,22 @@ async function saveNewNetwork() {
 // ============================================================================
 
 function openExpenseModal() {
+    console.log('=== openExpenseModal ВЫЗВАНА ===');
     const modal = document.getElementById('expenseModal');
+    console.log('Модальное окно expenseModal найдено:', !!modal);
     if (modal) {
-        modal.classList.add('active');
-        document.getElementById('expenseDate').value = new Date().toISOString().split('T')[0];
-        document.getElementById('expenseAmount').value = '';
-        document.getElementById('expenseDescription').value = '';
-        document.getElementById('selectedExpenseCurrencyDisplay').textContent = 'RUB';
-        document.getElementById('expenseCategoryId').value = '';
-        loadExpenseCategories();
+        const modal = document.getElementById('expenseModal');
+        if (modal) {
+            modal.classList.add('active');
+            document.getElementById('expenseDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('expenseAmount').value = '';
+            document.getElementById('expenseDescription').value = '';
+            document.getElementById('selectedExpenseCurrencyDisplay').textContent = 'RUB';
+            document.getElementById('expenseCategoryId').value = '';
+            loadExpenseCategories();
+        }
+    } else {
+        console.error('Модальное окно expenseModal НЕ НАЙДЕНО!');
     }
 }
 
