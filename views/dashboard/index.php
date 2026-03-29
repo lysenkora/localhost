@@ -952,7 +952,7 @@ $investedRubFormatted = number_format($profit['invested_rub'], 0, '.', ' ');
             <!-- Карточки аналитики в header -->
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; width: 100%;">
                 <!-- Площадки -->
-                <div style="background: white; border-radius: 16px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+                <div style="background: var(--bg-secondary) !important; border-radius: 16px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03); border: 1px solid var(--border-color);">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
                         <i class="fas fa-building" style="color: #4a9eff; font-size: 18px;"></i>
                         <h4 style="font-size: 14px; font-weight: 600; margin: 0;">Площадки</h4>
@@ -975,7 +975,7 @@ $investedRubFormatted = number_format($profit['invested_rub'], 0, '.', ' ');
                 </div>
 
                 <!-- Сети -->
-                <div style="background: white; border-radius: 16px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+                <div style="background: var(--bg-secondary) !important; border-radius: 16px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03); border: 1px solid var(--border-color);">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
                         <i class="fas fa-network-wired" style="color: #ff9f4a; font-size: 18px;"></i>
                         <h4 style="font-size: 14px; font-weight: 600; margin: 0;">Сети</h4>
@@ -1004,7 +1004,7 @@ $investedRubFormatted = number_format($profit['invested_rub'], 0, '.', ' ');
                 </div>
 
                 <!-- Типы платформ -->
-                <div style="background: white; border-radius: 16px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+                <div style="background: var(--bg-secondary) !important; border-radius: 16px; padding: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.03); border: 1px solid var(--border-color);">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
                         <i class="fas fa-chart-pie" style="color: #2ecc71; font-size: 18px;"></i>
                         <h4 style="font-size: 14px; font-weight: 600; margin: 0;">Типы платформ</h4>
