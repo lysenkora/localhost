@@ -26,15 +26,15 @@ let currentOrderId = null;
 // ДАННЫЕ ИЗ PHP
 // ============================================================================
 
-const platformsData = typeof platformsData !== 'undefined' ? platformsData : [];
-const assetsData = typeof assetsData !== 'undefined' ? assetsData : [];
-const allCurrencies = typeof allCurrencies !== 'undefined' ? allCurrencies : [];
-const fiatCurrencies = typeof fiatCurrencies !== 'undefined' ? fiatCurrencies : [];
-const networksData = typeof networksData !== 'undefined' ? networksData : [];
-const cryptoTypeAssetsData = typeof cryptoTypeAssetsData !== 'undefined' ? cryptoTypeAssetsData : {};
-const sectorAssetsData = typeof sectorAssetsData !== 'undefined' ? sectorAssetsData : {};
-const networkAssetsData = typeof networkAssetsData !== 'undefined' ? networkAssetsData : {};
-const usdRubRate = typeof usdRubRate !== 'undefined' ? usdRubRate : 92.5;
+//const platformsData = typeof platformsData !== 'undefined' ? platformsData : [];
+//const assetsData = typeof assetsData !== 'undefined' ? assetsData : [];
+//const allCurrencies = typeof allCurrencies !== 'undefined' ? allCurrencies : [];
+//const fiatCurrencies = typeof fiatCurrencies !== 'undefined' ? fiatCurrencies : [];
+//const networksData = typeof networksData !== 'undefined' ? networksData : [];
+//const cryptoTypeAssetsData = typeof cryptoTypeAssetsData !== 'undefined' ? cryptoTypeAssetsData : {};
+//const sectorAssetsData = typeof sectorAssetsData !== 'undefined' ? sectorAssetsData : {};
+//const networkAssetsData = typeof networkAssetsData !== 'undefined' ? networkAssetsData : {};
+//1/const usdRubRate = typeof usdRubRate !== 'undefined' ? usdRubRate : 92.5;
 
 // ============================================================================
 // ЦВЕТОВЫЕ СХЕМЫ ДЛЯ МОДАЛЬНЫХ ОКОН
