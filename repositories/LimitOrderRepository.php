@@ -10,7 +10,6 @@ class LimitOrderRepository {
      * Получение активных лимитных ордеров
      */
     public function getActive($limit = 3) {
-        // Исправлено: LIMIT подставляется напрямую в строку
         $limit = (int)$limit;
         $sql = "
             SELECT 

@@ -103,40 +103,18 @@ async function loadOperations(page) {
     if (operationsList) operationsList.style.opacity = '0.5';
     
     try {
-        // ВРЕМЕННЫЙ ТЕСТОВЫЙ URL - проверяем, работает ли fetch вообще
-        const testUrl = `/debug_api.php?page=${page}&per_page=5`;
-        console.log('1. TEST URL:', testUrl);
+        // Используем параметр 'api' вместо 'page' чтобы избежать конфликта
+        const url = `/index.php?api=get_operations&page=${page}&per_page=5`;
+        console.log('Fetching:', url);
         
-        const testResponse = await fetch(testUrl);
-        const testText = await testResponse.text();
-        console.log('2. Test response (first 200 chars):', testText.substring(0, 200));
+        const response = await fetch(url);
         
-        let testData;
-        try {
-            testData = JSON.parse(testText);
-            console.log('3. Test JSON parsed successfully:', testData);
-        } catch(e) {
-            console.error('4. Test JSON parse error:', e.message);
-            console.log('Raw response:', testText);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
         }
         
-        // ОСНОВНОЙ ЗАПРОС - теперь проверяем index.php
-        const mainUrl = `/index.php?api=get_operations&page=${page}&per_page=5`;
-        console.log('5. MAIN URL:', mainUrl);
-        
-        const mainResponse = await fetch(mainUrl);
-        const mainText = await mainResponse.text();
-        console.log('6. Main response (first 300 chars):', mainText.substring(0, 300));
-        
-        let data;
-        try {
-            data = JSON.parse(mainText);
-            console.log('7. Main JSON parsed successfully:', data);
-        } catch(e) {
-            console.error('8. Main JSON parse error:', e.message);
-            console.log('Full response preview:', mainText.substring(0, 500));
-            throw new Error('Server returned HTML instead of JSON');
-        }
+        const data = await response.json();
+        console.log('Received data:', data);
         
         if (data.success) {
             allFilteredOperations = filterOperations(data.operations);
@@ -156,7 +134,7 @@ async function loadOperations(page) {
         }
     } catch (error) {
         console.error('Error loading operations:', error);
-        console.log('Failed URL:', `/index.php?page=get_operations&page=${page}&per_page=5`);
+        console.log('Failed URL:', `/index.php?api=get_operations&page=${page}&per_page=5`);
         
         const operationsList = document.getElementById('operationsList');
         if (operationsList) {

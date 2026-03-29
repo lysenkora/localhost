@@ -3,7 +3,11 @@
 // КОНСТАНТЫ
 // ============================================================================
 
-// Настройки по умолчанию
+// Удалите эти строки если они есть:
+// define('ROOT_PATH', dirname(__DIR__));
+// define('VIEWS_PATH', ROOT_PATH . '/views');
+
+// Оставьте только эти:
 define('DEFAULT_CURRENCY', 'USD');
 define('DEFAULT_THEME', 'light');
 define('OPERATIONS_PER_PAGE', 5);
