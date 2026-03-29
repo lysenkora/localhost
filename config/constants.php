@@ -3,11 +3,6 @@
 // КОНСТАНТЫ
 // ============================================================================
 
-// Пути
-define('ROOT_PATH', dirname(__DIR__));
-define('VIEWS_PATH', ROOT_PATH . '/views');
-define('PUBLIC_PATH', ROOT_PATH . '/public');
-
 // Настройки по умолчанию
 define('DEFAULT_CURRENCY', 'USD');
 define('DEFAULT_THEME', 'light');

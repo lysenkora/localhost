@@ -10,7 +10,8 @@ class LimitOrderRepository {
      * Получение активных лимитных ордеров
      */
     public function getActive($limit = 3) {
-        // Исправлено: LIMIT подставляется напрямую, а не через плейсхолдер
+        // Исправлено: LIMIT подставляется напрямую в строку
+        $limit = (int)$limit;
         $sql = "
             SELECT 
                 lo.*,
@@ -24,7 +25,8 @@ class LimitOrderRepository {
             JOIN platforms p ON lo.platform_id = p.id
             WHERE lo.status = 'active'
             ORDER BY lo.created_at DESC
-            LIMIT " . (int)$limit;
+            LIMIT {$limit}
+        ";
         
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute();

@@ -6,3 +6,86 @@
 2026-03-29 10:07:03 - /
 2026-03-29 10:07:04 - /.well-known/appspecific/com.chrome.devtools.json
 2026-03-29 10:07:05 - /index.php?page=get_operations&page=1&per_page=5
+2026-03-29 10:27:16 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
+2026-03-29 10:27:17 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
+2026-03-29 10:29:25 - Request URI: /
+GET params: Array
+(
+)
+
+2026-03-29 10:29:25 - Request URI: /.well-known/appspecific/com.chrome.devtools.json
+GET params: Array
+(
+)
+
+2026-03-29 10:29:26 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
+2026-03-29 10:29:29 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
+2026-03-29 10:29:29 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
+2026-03-29 10:29:39 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
+2026-03-29 10:29:40 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
+2026-03-29 10:31:03 - Request URI: /
+GET params: Array
+(
+)
+
+2026-03-29 10:31:03 - Request URI: /.well-known/appspecific/com.chrome.devtools.json
+GET params: Array
+(
+)
+
+2026-03-29 10:31:04 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
+2026-03-29 10:38:12 - Request URI: /index.php?page=get_operations&page=1&per_page=5
+GET params: Array
+(
+    [page] => 1
+    [per_page] => 5
+)
+
