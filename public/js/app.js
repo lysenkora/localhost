@@ -1068,3 +1068,230 @@ document.addEventListener('keydown', function(e) {
         closeHistoryModal();
     }
 });
+
+// ============================================================================
+// ФУНКЦИИ ДЛЯ МОДАЛЬНЫХ ОКОН
+// ============================================================================
+
+function openDepositModal() {
+    console.log('openDepositModal - будет реализовано позже');
+    showNotification('info', 'Информация', 'Функция пополнения будет добавлена в следующем обновлении');
+}
+
+function openBuyModal() {
+    console.log('openBuyModal - будет реализовано позже');
+    showNotification('info', 'Информация', 'Функция покупки будет добавлена в следующем обновлении');
+}
+
+function openSellModal() {
+    console.log('openSellModal - будет реализовано позже');
+    showNotification('info', 'Информация', 'Функция продажи будет добавлена в следующем обновлении');
+}
+
+function openTransferModal() {
+    console.log('openTransferModal - будет реализовано позже');
+    showNotification('info', 'Информация', 'Функция перевода будет добавлена в следующем обновлении');
+}
+
+function openExpenseModal() {
+    console.log('openExpenseModal - будет реализовано позже');
+    showNotification('info', 'Информация', 'Функция расходов будет добавлена в следующем обновлении');
+}
+
+function openLimitOrderModal() {
+    console.log('openLimitOrderModal - будет реализовано позже');
+    showNotification('info', 'Информация', 'Функция лимитных ордеров будет добавлена в следующем обновлении');
+}
+
+function closeLimitOrderModal() {
+    const modal = document.getElementById('limitOrderModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function showExecuteConfirmation(orderId) {
+    console.log('showExecuteConfirmation', orderId);
+    showNotification('info', 'Информация', 'Исполнение ордера будет добавлено в следующем обновлении');
+}
+
+function showCancelConfirmation(orderId) {
+    console.log('showCancelConfirmation', orderId);
+    showNotification('info', 'Информация', 'Отмена ордера будет добавлена в следующем обновлении');
+}
+
+function openAddNoteModal() {
+    console.log('openAddNoteModal - будет реализовано позже');
+    showNotification('info', 'Информация', 'Функция заметок будет добавлена в следующем обновлении');
+}
+
+function closeNoteModal() {
+    const modal = document.getElementById('noteModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function closePlatformAssetsModal() {
+    const modal = document.getElementById('platformAssetsModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function closeNetworkAssetsModal() {
+    const modal = document.getElementById('networkAssetsModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function closeSectorAssetsModal() {
+    const modal = document.getElementById('sectorAssetsModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function closeCryptoTypeModal() {
+    const modal = document.getElementById('cryptoTypeModal');
+    if (modal) modal.classList.remove('active');
+}
+
+// ============================================================================
+// ФУНКЦИЯ ДЛЯ ОТОБРАЖЕНИЯ ИСТОРИИ АКТИВА
+// ============================================================================
+
+function showAssetHistory(data) {
+    console.log('showAssetHistory called with:', data);
+    
+    // Проверяем, есть ли данные
+    if (!data || !data.history) {
+        showNotification('info', 'Информация', 'Нет истории операций для этого актива');
+        return;
+    }
+    
+    // Создаем модальное окно
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'historyModal';
+    modal.style.display = 'flex';
+    
+    let historyHtml = `
+        <div class="modal" style="max-width: 600px; max-height: 80vh;">
+            <div class="modal-header">
+                <h2><i class="fas fa-history" style="color: #1a5cff;"></i> История операций: ${data.symbol}</h2>
+                <button class="modal-close" onclick="closeHistoryModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 60vh; overflow-y: auto;">
+    `;
+    
+    if (data.history.length === 0) {
+        historyHtml += '<div style="text-align: center; padding: 30px; color: #6b7a8f;">Нет истории операций</div>';
+    } else {
+        data.history.forEach(item => {
+            // Форматирование даты
+            let formattedDate = item.date;
+            if (typeof item.date === 'string' && item.date.match(/^\d{4}-\d{2}-\d{2}/)) {
+                const parts = item.date.split('T')[0].split('-');
+                formattedDate = `${parts[2]}.${parts[1]}.${parts[0]}`;
+            } else {
+                const date = new Date(item.date);
+                if (!isNaN(date.getTime())) {
+                    formattedDate = `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth() + 1).toString().padStart(2, '0')}.${date.getFullYear()}`;
+                }
+            }
+            
+            // Форматирование чисел
+            const formatNumber = (num, isFiat = false) => {
+                if (num === null || num === undefined) return '';
+                let str = num.toString();
+                if (str.includes('e')) str = num.toFixed(12);
+                
+                let formatted;
+                if (isFiat) {
+                    formatted = parseFloat(num).toFixed(2).replace(/\.?0+$/, '');
+                } else {
+                    formatted = parseFloat(num).toFixed(8).replace(/\.?0+$/, '');
+                }
+                
+                let parts = formatted.split('.');
+                parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                return parts[0] + (parts[1] ? '.' + parts[1] : '');
+            };
+            
+            const isFiat = (curr) => ['RUB', 'USD', 'EUR', 'GBP', 'CNY', 'JPY'].includes(curr);
+            const isFiatCurrency = isFiat(item.price_currency);
+            
+            const quantity = formatNumber(item.quantity, false);
+            const price = formatNumber(item.price, isFiatCurrency);
+            const total = formatNumber(item.quantity * item.price, isFiatCurrency);
+            
+            let operationColor = '#6b7a8f';
+            let operationText = '';
+            let priceText = '';
+            let totalText = '';
+            
+            switch(item.operation_type) {
+                case 'buy':
+                    operationColor = '#00a86b';
+                    operationText = `Покупка ${quantity} ${data.symbol}`;
+                    priceText = `по ${price} ${item.price_currency}`;
+                    totalText = `💰 ${total} ${item.price_currency}`;
+                    break;
+                case 'sell':
+                    operationColor = '#e53e3e';
+                    operationText = `Продажа ${quantity} ${data.symbol}`;
+                    priceText = `по ${price} ${item.price_currency}`;
+                    totalText = `💰 ${total} ${item.price_currency}`;
+                    break;
+                case 'deposit':
+                    operationColor = '#1a5cff';
+                    operationText = `Пополнение ${quantity} ${data.symbol}`;
+                    totalText = `➕ ${quantity} ${data.symbol}`;
+                    break;
+                case 'transfer_in':
+                    operationColor = '#ff9f4a';
+                    operationText = `Входящий перевод ${quantity} ${data.symbol}`;
+                    totalText = `📥 ${quantity} ${data.symbol}`;
+                    break;
+                case 'transfer_out':
+                    operationColor = '#ff9f4a';
+                    operationText = `Исходящий перевод ${quantity} ${data.symbol}`;
+                    totalText = `📤 ${quantity} ${data.symbol}`;
+                    break;
+            }
+            
+            historyHtml += `
+                <div style="padding: 12px; border-bottom: 1px solid var(--border-color, #edf2f7);">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <div>
+                            <div style="font-size: 13px; color: #6b7a8f; margin-bottom: 4px;">${formattedDate}</div>
+                            <div style="font-size: 12px; color: #6b7a8f;">${item.platform || '—'}</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div style="color: ${operationColor}; font-weight: 500; margin-bottom: 4px;">${operationText}</div>
+                            ${priceText ? `<div style="font-size: 12px; color: #6b7a8f;">${priceText}</div>` : ''}
+                            <div style="font-size: 13px; font-weight: 600; color: ${operationColor}; margin-top: 4px;">${totalText}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+    
+    historyHtml += `
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeHistoryModal()">Закрыть</button>
+            </div>
+        </div>
+    `;
+    
+    modal.innerHTML = historyHtml;
+    document.body.appendChild(modal);
+}
+
+function closeHistoryModal() {
+    const modal = document.getElementById('historyModal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Закрытие по ESC
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeHistoryModal();
+    }
+});
