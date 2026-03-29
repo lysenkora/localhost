@@ -104,4 +104,30 @@ class Portfolio extends BaseModel {
         ");
         return $stmt->fetchAll();
     }
+    
+    public function getTotalValue() {
+        // Получаем курс USD/RUB
+        $stmt = $this->pdo->query("
+            SELECT rate FROM exchange_rates 
+            WHERE from_currency = 'USD' AND to_currency = 'RUB' 
+            ORDER BY date DESC LIMIT 1
+        ");
+        $rate_data = $stmt->fetch();
+        $usd_rub_rate = $rate_data ? (float)$rate_data['rate'] : 92.50;
+        
+        $stmt = $this->pdo->query("
+            SELECT COALESCE(SUM(
+                CASE 
+                    WHEN a.symbol = 'RUB' THEN p.quantity / {$usd_rub_rate}
+                    WHEN a.symbol IN ('USDT', 'USDC', 'USD') THEN p.quantity
+                    ELSE p.quantity * COALESCE(p.average_buy_price, 0)
+                END
+            ), 0) as total
+            FROM portfolio p
+            JOIN assets a ON p.asset_id = a.id
+            WHERE p.quantity > 0
+        ");
+        $result = $stmt->fetch();
+        return (float)$result['total'];
+    }
 }
