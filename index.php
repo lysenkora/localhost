@@ -1,4 +1,8 @@
 <?php
+
+// Для отладки - выводим информацию о запросе
+file_put_contents(__DIR__ . '/debug.log', date('Y-m-d H:i:s') . ' - ' . $_SERVER['REQUEST_URI'] . "\n", FILE_APPEND);
+
 // ============================================================================
 // ТОЧКА ВХОДА (РОУТЕР)
 // ============================================================================
@@ -68,7 +72,6 @@ switch ($page) {
         $pageNum = isset($_GET['page']) ? (int)$_GET['page'] : 1;
         $perPage = isset($_GET['per_page']) ? (int)$_GET['per_page'] : 5;
         
-        // Добавьте проверку на минимальное значение
         $pageNum = max(1, $pageNum);
         $perPage = max(1, $perPage);
         

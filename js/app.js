@@ -1,3 +1,10 @@
+// Для отладки - перехватываем все ошибки fetch
+const originalFetch = window.fetch;
+window.fetch = function(...args) {
+    console.log('Fetch called with:', args[0]);
+    return originalFetch.apply(this, args);
+};
+
 // ============================================================================
 // ОСНОВНОЙ JS ФАЙЛ ДЛЯ ДАШБОРДА
 // ============================================================================
@@ -96,8 +103,20 @@ async function loadOperations(page) {
     if (operationsList) operationsList.style.opacity = '0.5';
     
     try {
-        const response = await fetch(`/?page=get_operations&page=${page}&per_page=5`);
+        // Убедитесь, что URL правильный
+        const url = `/?page=get_operations&page=${page}&per_page=5`;
+        console.log('Fetching:', url); // Добавьте для отладки
+        
+        //const response = await fetch(url);
+        const response = await fetch(`/index.php?page=get_operations&page=${page}&per_page=5`);
+        
+        // Добавьте проверку статуса
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const data = await response.json();
+        console.log('Received data:', data); // Добавьте для отладки
         
         if (data.success) {
             allFilteredOperations = filterOperations(data.operations);
@@ -112,9 +131,18 @@ async function loadOperations(page) {
                 has_previous: page > 1,
                 has_next: page < totalPages
             });
+        } else {
+            console.error('API returned success=false');
         }
     } catch (error) {
         console.error('Error loading operations:', error);
+        console.log('Failed URL:', `/?page=get_operations&page=${page}&per_page=5`);
+        
+        // Показываем сообщение об ошибке на странице
+        const operationsList = document.getElementById('operationsList');
+        if (operationsList) {
+            operationsList.innerHTML = '<div style="text-align: center; padding: 20px; color: #e53e3e;">Ошибка загрузки операций. Проверьте консоль.</div>';
+        }
     } finally {
         if (operationsList) operationsList.style.opacity = '1';
     }

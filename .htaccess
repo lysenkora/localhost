@@ -1,7 +1,7 @@
 RewriteEngine On
 RewriteBase /
 
-# Если файл существует, отдаем его
+# Если запрошенный файл существует, отдаем его
 RewriteCond %{REQUEST_FILENAME} -f
 RewriteRule ^(.*)$ $1 [L]
 
