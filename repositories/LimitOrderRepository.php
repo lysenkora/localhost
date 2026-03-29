@@ -1,8 +1,4 @@
 <?php
-// ============================================================================
-// РЕПОЗИТОРИЙ ЛИМИТНЫХ ОРДЕРОВ
-// ============================================================================
-
 class LimitOrderRepository {
     private $pdo;
     
@@ -14,7 +10,8 @@ class LimitOrderRepository {
      * Получение активных лимитных ордеров
      */
     public function getActive($limit = 3) {
-        $stmt = $this->pdo->prepare("
+        // Исправлено: LIMIT подставляется напрямую, а не через плейсхолдер
+        $sql = "
             SELECT 
                 lo.*,
                 a.symbol,
@@ -27,9 +24,10 @@ class LimitOrderRepository {
             JOIN platforms p ON lo.platform_id = p.id
             WHERE lo.status = 'active'
             ORDER BY lo.created_at DESC
-            LIMIT ?
-        ");
-        $stmt->execute([$limit]);
+            LIMIT " . (int)$limit;
+        
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute();
         return $stmt->fetchAll();
     }
     
