@@ -847,6 +847,158 @@ $investedRubFormatted = number_format($profit['invested_rub'], 0, '.', ' ');
                 font-size: 12px;
             }
         }
+
+        /* ============================================================================
+   ГРУППА ВЫБОРА ПЛОЩАДКИ
+   ============================================================================ */
+
+.platform-select-btn {
+    width: 100%;
+    padding: 12px 16px;
+    background: #f8fafd;
+    border: 1px solid #e0e6ed;
+    border-radius: 12px;
+    font-size: 14px;
+    font-family: 'Inter', sans-serif;
+    color: #2c3e50;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.2s ease;
+    height: 48px;
+}
+
+.platform-select-btn:hover {
+    background: #1a5cff;
+    border-color: #1a5cff;
+    color: white;
+}
+
+.platform-select-btn:hover i {
+    transform: rotate(180deg);
+}
+
+.platform-select-btn i {
+    transition: transform 0.3s ease;
+    font-size: 12px;
+}
+
+.platform-select-btn:focus {
+    outline: none;
+    border-color: #1a5cff;
+    box-shadow: 0 0 0 3px rgba(26, 92, 255, 0.1);
+}
+
+/* ============================================================================
+   ГРУППА ВВОДА ВАЛЮТЫ
+   ============================================================================ */
+
+.currency-input-group {
+    display: flex;
+    width: 100%;
+    position: relative;
+}
+
+.currency-input-group .form-input {
+    flex: 1;
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-right: none;
+    text-align: right;
+    padding-right: 15px;
+    height: 48px;
+}
+
+.currency-input-group .currency-select-btn {
+    width: 100px;
+    background: #f8fafd;
+    border: 1px solid #e0e6ed;
+    border-left: none;
+    border-top-right-radius: 12px;
+    border-bottom-right-radius: 12px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #2c3e50;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    height: 48px;
+    padding: 0 10px;
+    white-space: nowrap;
+}
+
+.currency-input-group .currency-select-btn:hover {
+    background: #1a5cff;
+    border-color: #1a5cff;
+    color: white;
+}
+
+.currency-input-group .currency-select-btn:hover i {
+    transform: rotate(180deg);
+}
+
+.currency-input-group .currency-select-btn i {
+    transition: transform 0.3s ease;
+    font-size: 12px;
+}
+
+.currency-input-group .form-input:focus {
+    border-color: #1a5cff;
+    border-right-color: #1a5cff;
+    outline: none;
+    box-shadow: none;
+}
+
+.currency-input-group:focus-within .form-input,
+.currency-input-group:focus-within .currency-select-btn {
+    border-color: #1a5cff;
+    box-shadow: 0 0 0 3px rgba(26, 92, 255, 0.1);
+}
+
+.currency-input-group:focus-within .currency-select-btn {
+    background: #1a5cff;
+    color: white;
+}
+
+.dark-theme .platform-select-btn {
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+.dark-theme .platform-select-btn:hover {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: white;
+}
+
+.dark-theme .currency-select-btn {
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+.dark-theme .currency-select-btn:hover {
+    background: var(--accent-primary);
+    border-color: var(--accent-primary);
+    color: white;
+}
+
+.dark-theme .currency-input-group .form-input {
+    background: var(--bg-tertiary);
+    border-color: var(--border-color);
+    color: var(--text-primary);
+}
+
+.dark-theme .currency-input-group .form-input:focus {
+    border-color: var(--accent-primary);
+}
     </style>
 </head>
 <body class="<?= $current_theme === 'dark' ? 'dark-theme' : '' ?>">
