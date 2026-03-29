@@ -805,7 +805,8 @@ $investedRubFormatted = number_format($profit['invested_rub'], 0, '.', ' ');
         }
 
         .notification {
-            background: white;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
             border-radius: 16px;
             padding: 16px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
