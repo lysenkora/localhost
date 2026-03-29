@@ -1,8 +1,4 @@
 <?php
-
-// Для отладки - выводим информацию о запросе
-file_put_contents(__DIR__ . '/debug.log', date('Y-m-d H:i:s') . ' - ' . $_SERVER['REQUEST_URI'] . "\n", FILE_APPEND);
-
 // ============================================================================
 // ТОЧКА ВХОДА (РОУТЕР)
 // ============================================================================
@@ -11,27 +7,32 @@ file_put_contents(__DIR__ . '/debug.log', date('Y-m-d H:i:s') . ' - ' . $_SERVER
 define('ROOT_PATH', __DIR__);
 define('VIEWS_PATH', ROOT_PATH . '/views');
 
+// Подключаем все необходимые файлы вручную
 require_once ROOT_PATH . '/config/database.php';
 require_once ROOT_PATH . '/config/constants.php';
 require_once ROOT_PATH . '/helpers/functions.php';
 require_once ROOT_PATH . '/helpers/Formatter.php';
 
-// Автозагрузка классов
-spl_autoload_register(function ($class) {
-    $paths = [
-        ROOT_PATH . '/repositories/',
-        ROOT_PATH . '/services/',
-        ROOT_PATH . '/controllers/'
-    ];
-    
-    foreach ($paths as $path) {
-        $file = $path . $class . '.php';
-        if (file_exists($file)) {
-            require_once $file;
-            return;
-        }
-    }
-});
+// Подключаем репозитории
+require_once ROOT_PATH . '/repositories/PlatformRepository.php';
+require_once ROOT_PATH . '/repositories/AssetRepository.php';
+require_once ROOT_PATH . '/repositories/TradeRepository.php';
+require_once ROOT_PATH . '/repositories/DepositRepository.php';
+require_once ROOT_PATH . '/repositories/TransferRepository.php';
+require_once ROOT_PATH . '/repositories/OperationRepository.php';
+require_once ROOT_PATH . '/repositories/PortfolioRepository.php';
+require_once ROOT_PATH . '/repositories/NetworkRepository.php';
+require_once ROOT_PATH . '/repositories/NoteRepository.php';
+require_once ROOT_PATH . '/repositories/LimitOrderRepository.php';
+require_once ROOT_PATH . '/repositories/ExpenseRepository.php';
+
+// Подключаем сервисы
+require_once ROOT_PATH . '/services/CalculationService.php';
+
+// Подключаем контроллеры
+require_once ROOT_PATH . '/controllers/DashboardController.php';
+require_once ROOT_PATH . '/controllers/ApiController.php';
+require_once ROOT_PATH . '/controllers/OperationController.php';
 
 // Получаем подключение к БД
 $pdo = getDbConnection();
@@ -49,19 +50,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // GET запросы - определяем маршрут
-$page = $_GET['page'] ?? 'dashboard';
+$page = isset($_GET['page']) ? $_GET['page'] : 'dashboard';
 
 switch ($page) {
     case 'operations':
         $controller = new OperationController($pdo);
         $data = $controller->getOperationsData(
-            $_GET['p'] ?? 1,
+            isset($_GET['p']) ? (int)$_GET['p'] : 1,
             [
-                'type' => $_GET['type'] ?? 'all',
-                'platform_id' => $_GET['platform'] ?? 0,
-                'asset_id' => $_GET['asset'] ?? 0,
-                'date_from' => $_GET['date_from'] ?? '',
-                'date_to' => $_GET['date_to'] ?? ''
+                'type' => isset($_GET['type']) ? $_GET['type'] : 'all',
+                'platform_id' => isset($_GET['platform']) ? (int)$_GET['platform'] : 0,
+                'asset_id' => isset($_GET['asset']) ? (int)$_GET['asset'] : 0,
+                'date_from' => isset($_GET['date_from']) ? $_GET['date_from'] : '',
+                'date_to' => isset($_GET['date_to']) ? $_GET['date_to'] : ''
             ]
         );
         
@@ -76,11 +77,11 @@ switch ($page) {
         $perPage = max(1, $perPage);
         
         $filters = [
-            'type' => $_GET['type'] ?? 'all',
-            'platform_id' => $_GET['platform'] ?? 0,
-            'asset_id' => $_GET['asset'] ?? 0,
-            'date_from' => $_GET['date_from'] ?? '',
-            'date_to' => $_GET['date_to'] ?? ''
+            'type' => isset($_GET['type']) ? $_GET['type'] : 'all',
+            'platform_id' => isset($_GET['platform']) ? (int)$_GET['platform'] : 0,
+            'asset_id' => isset($_GET['asset']) ? (int)$_GET['asset'] : 0,
+            'date_from' => isset($_GET['date_from']) ? $_GET['date_from'] : '',
+            'date_to' => isset($_GET['date_to']) ? $_GET['date_to'] : ''
         ];
         
         $operationRepo = new OperationRepository($pdo);
@@ -99,6 +100,7 @@ switch ($page) {
         ]);
         exit;
         break;
+        
     case 'dashboard':
     default:
         $controller = new DashboardController($pdo);

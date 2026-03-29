@@ -1,8 +1,4 @@
 <?php
-// ============================================================================
-// КОНФИГУРАЦИЯ БАЗЫ ДАННЫХ
-// ============================================================================
-
 class Database {
     private static $instance = null;
     private $pdo;
@@ -20,8 +16,7 @@ class Database {
                 $this->password,
                 [
                     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES => false
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
                 ]
             );
         } catch (PDOException $e) {
@@ -41,7 +36,6 @@ class Database {
     }
 }
 
-// Для обратной совместимости с существующим кодом
 function getDbConnection() {
     return Database::getInstance()->getConnection();
 }
