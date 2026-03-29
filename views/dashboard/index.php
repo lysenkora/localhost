@@ -1332,6 +1332,6 @@ $investedRubFormatted = number_format($profit['invested_rub'], 0, '.', ' ');
         const networkAssetsData = <?= json_encode($network_assets) ?>;
         const usdRubRate = <?= $usd_rub_rate ?>;
     </script>
-    <script src="/public/js/app.js"></script>
+    <script src="/js/app.js"></script>
 </body>
 </html>

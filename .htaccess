@@ -1,5 +1,11 @@
-# Отключаем mod_rewrite для корня
-RewriteEngine Off
+RewriteEngine On
+RewriteBase /
 
-# Просто перенаправляем на public папку
-RedirectMatch ^/$ /public/
+# Если файл существует, отдаем его
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^(.*)$ $1 [L]
+
+# Все остальные запросы на index.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [QSA,L]
