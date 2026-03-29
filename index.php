@@ -1,6 +1,6 @@
 <?php
 // ============================================================================
-// ТОЧКА ВХОДА (РОУТЕР) - теперь в корне
+// ТОЧКА ВХОДА (РОУТЕР)
 // ============================================================================
 
 // Определяем корневую директорию проекта
@@ -68,6 +68,10 @@ switch ($page) {
         $pageNum = isset($_GET['page']) ? (int)$_GET['page'] : 1;
         $perPage = isset($_GET['per_page']) ? (int)$_GET['per_page'] : 5;
         
+        // Добавьте проверку на минимальное значение
+        $pageNum = max(1, $pageNum);
+        $perPage = max(1, $perPage);
+        
         $filters = [
             'type' => $_GET['type'] ?? 'all',
             'platform_id' => $_GET['platform'] ?? 0,
@@ -92,7 +96,6 @@ switch ($page) {
         ]);
         exit;
         break;
-        
     case 'dashboard':
     default:
         $controller = new DashboardController($pdo);

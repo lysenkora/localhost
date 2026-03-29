@@ -57,19 +57,25 @@ class OperationRepository {
         
         $whereSql = empty($whereConditions) ? "" : " AND " . implode(" AND ", $whereConditions);
         
+        // Безопасное приведение к int
+        $page = max(1, (int)$page);
+        $perPage = max(1, (int)$perPage);
         $offset = ($page - 1) * $perPage;
         
+        // Формируем SQL с LIMIT
         $sql = $baseSql . $whereSql . " ORDER BY date DESC, operation_id DESC LIMIT {$perPage} OFFSET {$offset}";
         
         $stmt = $this->pdo->prepare($sql);
+        
+        // Выполняем с параметрами
         $stmt->execute($params);
         $operations = $stmt->fetchAll();
         
-        // Подсчет общего количества
+        // Подсчет общего количества - отдельный запрос без LIMIT
         $countSql = "SELECT COUNT(*) as total FROM (" . $baseSql . $whereSql . ") as count_query";
-        $stmt = $this->pdo->prepare($countSql);
-        $stmt->execute($params);
-        $total = $stmt->fetch()['total'];
+        $stmtCount = $this->pdo->prepare($countSql);
+        $stmtCount->execute($params);
+        $total = $stmtCount->fetch()['total'];
         
         return [
             'operations' => $this->groupOperations($operations),

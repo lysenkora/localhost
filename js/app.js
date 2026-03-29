@@ -96,7 +96,7 @@ async function loadOperations(page) {
     if (operationsList) operationsList.style.opacity = '0.5';
     
     try {
-        const response = await fetch(`index.php?page=get_operations&page=${page}&per_page=5`);
+        const response = await fetch(`/?page=get_operations&page=${page}&per_page=5`);
         const data = await response.json();
         
         if (data.success) {
