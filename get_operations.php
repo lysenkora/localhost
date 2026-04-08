@@ -1,8 +1,5 @@
 <?php
 
-// Временное логирование для отладки
-file_put_contents('C:\OSPanel\domains\localhost\debug_test.log', date('Y-m-d H:i:s') . " - get_operations.php вызван\n", FILE_APPEND);
-
 // ============================================================================
 // ПОДКЛЮЧЕНИЕ К БД
 // ============================================================================
@@ -26,7 +23,6 @@ try {
 // Проверяем, какой asset_id у ETH
 $check_eth = $pdo->query("SELECT id, symbol FROM assets WHERE symbol = 'ETH'");
 $eth = $check_eth->fetch();
-error_log("ETH asset_id: " . ($eth ? $eth['id'] : 'NOT FOUND'));
 
 // ============================================================================
 // ОБРАБОТКА POST ЗАПРОСОВ
@@ -46,27 +42,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         
         try {
-            // 1. Получаем историю покупок (все сделки покупки)
+            // 1. Получаем историю покупок с учетом проданных частей из sold_lots
             $stmt = $pdo->prepare("
                 SELECT 
                     t.id as trade_id,
                     t.platform_id,
                     pl.name as platform_name,
-                    t.quantity,
+                    t.quantity as original_quantity,
                     t.price,
                     t.price_currency,
                     t.operation_date,
-                    t.notes
+                    t.notes,
+                    COALESCE(
+                        (SELECT SUM(sl.quantity) 
+                        FROM sold_lots sl
+                        WHERE sl.buy_trade_id = t.id),
+                        0
+                    ) as sold_quantity
                 FROM trades t
                 JOIN platforms pl ON t.platform_id = pl.id
                 WHERE t.asset_id = ? 
                     AND t.operation_type = 'buy'
-                ORDER BY t.operation_date DESC
+                ORDER BY t.operation_date ASC
             ");
             $stmt->execute([$asset_id]);
-            $purchase_history = $stmt->fetchAll();
+            $purchases = $stmt->fetchAll();
             
-            // 2. Получаем текущие остатки по площадкам
+            // 2. Для каждой покупки получаем информацию о фактических продажах
+            $purchase_history = [];
+            foreach ($purchases as $purchase) {
+                $remaining = floatval($purchase['original_quantity']) - floatval($purchase['sold_quantity']);
+                
+                // Пропускаем полностью проданные активы
+                if ($remaining <= 0.00000001) {
+                    continue;
+                }
+                
+                // Если была частичная продажа, получаем фактические данные о продаже
+                $sold_quantity = floatval($purchase['sold_quantity']);
+                $has_partial_sale = ($sold_quantity > 0);
+                
+                // Получаем фактические данные о продажах для этой покупки
+                $actual_sales = [];
+                if ($has_partial_sale) {
+                    $stmt_sales = $pdo->prepare("
+                        SELECT 
+                            sl.quantity as sold_quantity,
+                            t_sell.price as sell_price,
+                            t_sell.price_currency as sell_currency,
+                            t_sell.operation_date as sell_date,
+                            (t_sell.price * sl.quantity) as sell_total,
+                            (sl.buy_price * sl.quantity) as buy_total,
+                            ((t_sell.price - sl.buy_price) * sl.quantity) as profit
+                        FROM sold_lots sl
+                        JOIN trades t_sell ON sl.sell_trade_id = t_sell.id
+                        WHERE sl.buy_trade_id = ?
+                        ORDER BY t_sell.operation_date ASC
+                    ");
+                    $stmt_sales->execute([$purchase['trade_id']]);
+                    $actual_sales = $stmt_sales->fetchAll();
+                }
+                
+                $purchase_history[] = [
+                    'trade_id' => $purchase['trade_id'],
+                    'platform_id' => $purchase['platform_id'],
+                    'platform_name' => $purchase['platform_name'],
+                    'quantity' => $remaining, // Только остаток
+                    'original_quantity' => floatval($purchase['original_quantity']),
+                    'sold_quantity' => $sold_quantity,
+                    'price' => floatval($purchase['price']),
+                    'price_currency' => $purchase['price_currency'],
+                    'operation_date' => $purchase['operation_date'],
+                    'notes' => $purchase['notes'],
+                    'has_partial_sale' => $has_partial_sale,
+                    'actual_sales' => $actual_sales // Фактические данные о продажах
+                ];
+            }
+            
+            // 3. Получаем текущие остатки по площадкам
             $stmt = $pdo->prepare("
                 SELECT 
                     p.id as portfolio_id,
@@ -83,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$asset_id]);
             $platform_balances = $stmt->fetchAll();
             
-            // 3. Рассчитываем общую статистику
+            // 4. Рассчитываем общую статистику
             $total_quantity = array_sum(array_column($platform_balances, 'quantity'));
             $total_value = 0;
             foreach ($platform_balances as $balance) {
@@ -263,10 +316,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach ($lots as $index => $lot) {
                 $lot_platform_id = $lot['platform_id'];
                 $quantity = floatval($lot['quantity']);
+                $avg_price = floatval($lot['avg_price']); // средняя цена покупки для этого лота
                 
                 if ($quantity <= 0) continue;
                 
-                file_put_contents($log_file, date('Y-m-d H:i:s') . " - Обработка лота $index: platform_id=$lot_platform_id, quantity=$quantity\n", FILE_APPEND);
+                file_put_contents($log_file, date('Y-m-d H:i:s') . " - Обработка лота $index: platform_id=$lot_platform_id, quantity=$quantity, avg_price=$avg_price\n", FILE_APPEND);
                 
                 // Получаем текущее количество
                 $stmt = $pdo->prepare("
@@ -286,7 +340,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new Exception("Недостаточно актива. Доступно: {$portfolio['quantity']}, нужно: {$quantity}");
                 }
                 
-                // Уменьшаем количество
+                // ========== ДОБАВЛЯЕМ ЗАПИСЬ В sold_lots ==========
+                // Находим конкретные покупки, из которых берем актив (FIFO)
+                $stmt_buys = $pdo->prepare("
+                    SELECT id, quantity, price, price_currency
+                    FROM trades
+                    WHERE asset_id = ? 
+                        AND platform_id = ?
+                        AND operation_type = 'buy'
+                    ORDER BY operation_date ASC, id ASC
+                ");
+                $stmt_buys->execute([$asset_id, $lot_platform_id]);
+                $buys = $stmt_buys->fetchAll();
+                
+                // Собираем уже проданные количества из sold_lots
+                $stmt_sold = $pdo->prepare("
+                    SELECT buy_trade_id, SUM(quantity) as sold_quantity
+                    FROM sold_lots
+                    WHERE buy_trade_id IN (SELECT id FROM trades WHERE asset_id = ? AND platform_id = ? AND operation_type = 'buy')
+                    GROUP BY buy_trade_id
+                ");
+                $stmt_sold->execute([$asset_id, $lot_platform_id]);
+                $sold_map = [];
+                while ($row = $stmt_sold->fetch()) {
+                    $sold_map[$row['buy_trade_id']] = floatval($row['sold_quantity']);
+                }
+                
+                // Рассчитываем остатки по каждой покупке
+                $remaining_to_sell = $quantity;
+                foreach ($buys as $buy) {
+                    if ($remaining_to_sell <= 0) break;
+                    
+                    $buy_id = $buy['id'];
+                    $buy_quantity = floatval($buy['quantity']);
+                    $already_sold = isset($sold_map[$buy_id]) ? $sold_map[$buy_id] : 0;
+                    $available = $buy_quantity - $already_sold;
+                    
+                    if ($available <= 0) continue;
+                    
+                    $take_quantity = min($available, $remaining_to_sell);
+                    
+                    // Записываем в sold_lots
+                    $stmt_insert = $pdo->prepare("
+                        INSERT INTO sold_lots (sell_trade_id, buy_trade_id, quantity, buy_price, buy_price_currency)
+                        VALUES (?, ?, ?, ?, ?)
+                    ");
+                    $stmt_insert->execute([
+                        $trade_id,           // ID текущей продажи
+                        $buy_id,             // ID покупки
+                        $take_quantity,      // количество из этой покупки
+                        $buy['price'],       // цена покупки
+                        $buy['price_currency'] // валюта цены покупки
+                    ]);
+                    
+                    file_put_contents($log_file, date('Y-m-d H:i:s') . " - Записано в sold_lots: buy_id=$buy_id, quantity=$take_quantity\n", FILE_APPEND);
+                    
+                    $remaining_to_sell -= $take_quantity;
+                }
+                
+                if ($remaining_to_sell > 0.00000001) {
+                    throw new Exception("Не удалось найти достаточно покупок для списания. Осталось: $remaining_to_sell");
+                }
+                
+                // Уменьшаем количество в портфеле
                 $new_quantity = $portfolio['quantity'] - $quantity;
                 if ($new_quantity > 0) {
                     $stmt = $pdo->prepare("UPDATE portfolio SET quantity = ? WHERE id = ?");
@@ -599,13 +715,10 @@ try {
                 $op['total_cost'] = $total_cost;
                 $op['profit'] = $profit;
                 $op['profit_percent'] = $profit_percent;
-                
-                error_log("FIFO RESULT: asset_id={$op['asset_id']}, qty={$op['amount_out']}, total_sold=$total_sold, total_cost=$total_cost, profit=$profit, percent=$profit_percent");
             } else {
                 $op['total_cost'] = 0;
                 $op['profit'] = 0;
                 $op['profit_percent'] = 0;
-                error_log("FIFO FAILED: asset_id={$op['asset_id']}, remaining_to_sell=$remaining_to_sell, buys_count=" . count($buys) . ", sells_count=" . count($sells));
             }
         }
     }

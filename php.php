@@ -189,156 +189,61 @@ uasort($sector_assets_grouped, function($a, $b) {
 $sector_assets_json = json_encode($sector_assets_grouped);
 
 // ============================================================================
-// ПОЛУЧЕНИЕ АКТИВОВ ПО СЕТЯМ ДЛЯ МОДАЛЬНОГО ОКНА (исправленная версия)
+// ПОЛУЧЕНИЕ АКТИВОВ ПО СЕТЯМ (используя поле network в portfolio)
 // ============================================================================
 
-// Получаем все криптоактивы с детализацией по переводам
 $stmt = $pdo->query("
     SELECT 
+        COALESCE(p.network, 'UNKNOWN') as network,
         a.id as asset_id,
         a.symbol,
         a.name as asset_name,
         a.type as asset_type,
-        p.id as portfolio_id,
-        p.platform_id,
+        a.currency_code,
         p.quantity,
         p.average_buy_price,
-        p.currency_code,
-        pl.name as platform_name
+        pl.name as platform_name,
+        pl.id as platform_id,
+        CASE 
+            WHEN a.symbol = 'RUB' THEN p.quantity / " . $usd_rub_rate . "
+            WHEN a.symbol IN ('USDT', 'USDC', 'USD') THEN p.quantity
+            ELSE p.quantity * COALESCE(p.average_buy_price, 0)
+        END as value_usd
     FROM portfolio p
     JOIN assets a ON p.asset_id = a.id
     JOIN platforms pl ON p.platform_id = pl.id
     WHERE a.type = 'crypto' AND p.quantity > 0
+    ORDER BY network, value_usd DESC
 ");
-$crypto_portfolio = $stmt->fetchAll();
 
-// Получаем все переводы с указанием сетей
-$stmt = $pdo->query("
-    SELECT 
-        to_platform_id,
-        asset_id,
-        quantity,
-        to_network as network,
-        transfer_date
-    FROM transfers
-    WHERE to_network IS NOT NULL AND to_network != ''
-    ORDER BY transfer_date ASC
-");
-$all_transfers = $stmt->fetchAll();
+$all_network_assets = $stmt->fetchAll();
 
-// Группируем переводы по (platform_id, asset_id)
-$transfers_by_portfolio = [];
-foreach ($all_transfers as $transfer) {
-    $key = $transfer['to_platform_id'] . '_' . $transfer['asset_id'];
-    if (!isset($transfers_by_portfolio[$key])) {
-        $transfers_by_portfolio[$key] = [];
-    }
-    $transfers_by_portfolio[$key][] = $transfer;
-}
-
-// Распределяем активы по сетям
+// Группируем активы по сетям
 $network_assets_grouped = [];
-
-foreach ($crypto_portfolio as $asset) {
-    $key = $asset['platform_id'] . '_' . $asset['asset_id'];
-    $total_quantity = floatval($asset['quantity']);
+foreach ($all_network_assets as $asset) {
+    $network = $asset['network'];
     
-    // Ищем переводы для этой позиции
-    $transfers = isset($transfers_by_portfolio[$key]) ? $transfers_by_portfolio[$key] : [];
-    
-    if (empty($transfers)) {
-        // Нет переводов - сеть не определена
-        $network = 'UNKNOWN';
-        $quantity_in_network = $total_quantity;
-    } else {
-        // Суммируем количество по сетям
-        $network_quantities = [];
-        $total_transferred = 0;
-        
-        foreach ($transfers as $transfer) {
-            $network = $transfer['network'];
-            $quantity = floatval($transfer['quantity']);
-            
-            if (!isset($network_quantities[$network])) {
-                $network_quantities[$network] = 0;
-            }
-            $network_quantities[$network] += $quantity;
-            $total_transferred += $quantity;
-        }
-        
-        // Если сумма переводов меньше общего количества, остаток относим к последней сети
-        if ($total_transferred < $total_quantity && count($transfers) > 0) {
-            $last_network = $transfers[count($transfers) - 1]['network'];
-            $network_quantities[$last_network] += ($total_quantity - $total_transferred);
-        }
-        
-        // Для каждой сети создаем запись
-        foreach ($network_quantities as $network => $quantity_in_network) {
-            if ($quantity_in_network <= 0) continue;
-            
-            // Рассчитываем стоимость для этого количества
-            if ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC') {
-                $value = $quantity_in_network;
-            } else if ($asset['average_buy_price'] > 0) {
-                $value = $quantity_in_network * $asset['average_buy_price'];
-            } else {
-                $value = 0;
-            }
-            
-            if (!isset($network_assets_grouped[$network])) {
-                $network_assets_grouped[$network] = [
-                    'network' => $network,
-                    'assets' => [],
-                    'total_value_usd' => 0
-                ];
-            }
-            
-            $network_assets_grouped[$network]['assets'][] = [
-                'symbol' => $asset['symbol'],
-                'asset_name' => $asset['asset_name'],
-                'quantity' => $quantity_in_network,
-                'average_buy_price' => $asset['average_buy_price'],
-                'currency_code' => $asset['currency_code'],
-                'platform_name' => $asset['platform_name'],
-                'value_usd' => $value
-            ];
-            
-            $network_assets_grouped[$network]['total_value_usd'] += $value;
-        }
-        
-        continue; // Пропускаем добавление для UNKNOWN
-    }
-    
-    // Если нет переводов, добавляем в UNKNOWN
-    if ($total_quantity > 0) {
-        if ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC') {
-            $value = $total_quantity;
-        } else if ($asset['average_buy_price'] > 0) {
-            $value = $total_quantity * $asset['average_buy_price'];
-        } else {
-            $value = 0;
-        }
-        
-        if (!isset($network_assets_grouped['UNKNOWN'])) {
-            $network_assets_grouped['UNKNOWN'] = [
-                'network' => 'UNKNOWN',
-                'assets' => [],
-                'total_value_usd' => 0
-            ];
-        }
-        
-        $network_assets_grouped['UNKNOWN']['assets'][] = [
-            'symbol' => $asset['symbol'],
-            'asset_name' => $asset['asset_name'],
-            'quantity' => $total_quantity,
-            'average_buy_price' => $asset['average_buy_price'],
-            'currency_code' => $asset['currency_code'],
-            'platform_name' => $asset['platform_name'],
-            'value_usd' => $value
+    if (!isset($network_assets_grouped[$network])) {
+        $network_assets_grouped[$network] = [
+            'network' => $network,
+            'assets' => [],
+            'total_value_usd' => 0
         ];
-        
-        $network_assets_grouped['UNKNOWN']['total_value_usd'] += $value;
     }
+    
+    $network_assets_grouped[$network]['assets'][] = [
+        'symbol' => $asset['symbol'],
+        'asset_name' => $asset['asset_name'],
+        'asset_type' => $asset['asset_type'],
+        'quantity' => $asset['quantity'],
+        'average_buy_price' => $asset['average_buy_price'],
+        'currency_code' => $asset['currency_code'],
+        'platform_name' => $asset['platform_name'],
+        'platform_id' => $asset['platform_id'],
+        'value_usd' => $asset['value_usd']
+    ];
+    
+    $network_assets_grouped[$network]['total_value_usd'] += $asset['value_usd'];
 }
 
 // Сортируем сети по общей стоимости
@@ -346,7 +251,6 @@ uasort($network_assets_grouped, function($a, $b) {
     return $b['total_value_usd'] <=> $a['total_value_usd'];
 });
 
-// Передаем данные в JavaScript
 $network_assets_json = json_encode($network_assets_grouped);
 
 // ============================================================================
@@ -356,9 +260,9 @@ $network_assets_json = json_encode($network_assets_grouped);
 // Получаем все активы с детализацией по площадкам для модального окна
 $stmt = $pdo->query("
     SELECT 
-        p.id as platform_id,
-        p.name as platform_name,
-        p.type as platform_type,
+        pf.id as platform_id,
+        pf.name as platform_name,
+        pf.type as platform_type,
         a.id as asset_id,
         a.symbol,
         a.name as asset_name,
@@ -367,15 +271,16 @@ $stmt = $pdo->query("
         pl.average_buy_price,
         pl.currency_code,
         CASE 
-            WHEN a.symbol = 'RUB' THEN pl.quantity / " . $usd_rub_rate . "
+            WHEN a.symbol = 'RUB' THEN pl.quantity / (SELECT rate FROM exchange_rates WHERE from_currency = 'USD' AND to_currency = 'RUB' ORDER BY date DESC LIMIT 1)
             WHEN a.symbol IN ('USDT', 'USDC', 'USD') THEN pl.quantity
+            WHEN pl.currency_code = 'RUB' THEN (pl.quantity * COALESCE(pl.average_buy_price, 0)) / (SELECT rate FROM exchange_rates WHERE from_currency = 'USD' AND to_currency = 'RUB' ORDER BY date DESC LIMIT 1)
             ELSE pl.quantity * COALESCE(pl.average_buy_price, 0)
         END as value_usd
     FROM portfolio pl
     JOIN assets a ON pl.asset_id = a.id
-    JOIN platforms p ON pl.platform_id = p.id
+    JOIN platforms pf ON pl.platform_id = pf.id
     WHERE pl.quantity > 0
-    ORDER BY p.name, value_usd DESC
+    ORDER BY pf.name, value_usd DESC
 ");
 $all_platform_assets = $stmt->fetchAll();
 
@@ -477,7 +382,6 @@ $stmt = $pdo->query("
     INNER JOIN assets a ON pl.asset_id = a.id
     WHERE p.is_active = 1
     GROUP BY p.id, p.name, p.type
-    HAVING total_value_usd > 0
     ORDER BY total_value_usd DESC
 ");
 $platform_distribution = $stmt->fetchAll();
@@ -607,85 +511,137 @@ if ($total_crypto_value > 0) {
 $total_crypto = $total_crypto_value;
 
 // ============================================================================
-// ПОЛУЧЕНИЕ ДАННЫХ ИЗ БД
+// ПОЛУЧЕНИЕ ТЕКУЩЕЙ СТОИМОСТИ ПОРТФЕЛЯ
 // ============================================================================
 
-// Получаем все активы из портфеля для точного расчета
-$stmt = $pdo->query("
+// Получаем актуальный курс USD/RUB
+$stmt_rate = $pdo->query("
+    SELECT rate FROM exchange_rates 
+    WHERE from_currency = 'USD' AND to_currency = 'RUB' 
+    ORDER BY date DESC LIMIT 1
+");
+$rate_data = $stmt_rate->fetch();
+$usd_rub_rate = $rate_data ? $rate_data['rate'] : 92.50;
+
+// Получаем все активы из портфеля с текущими рыночными ценами
+$stmt = $pdo->prepare("
     SELECT 
+        a.id,
         a.symbol,
         a.type,
-        p.quantity,
-        p.average_buy_price,
-        p.currency_code
-    FROM portfolio p
-    JOIN assets a ON p.asset_id = a.id
+        a.currency_code as asset_currency,
+        pl.quantity,
+        pl.average_buy_price,
+        pl.currency_code as portfolio_currency,
+        -- Текущая рыночная цена (из последней покупки)
+        COALESCE(
+            (SELECT price FROM trades t 
+             WHERE t.asset_id = a.id AND t.operation_type = 'buy' 
+             ORDER BY t.operation_date DESC LIMIT 1), 0
+        ) as current_price,
+        -- Валюта текущей цены
+        COALESCE(
+            (SELECT price_currency FROM trades t 
+             WHERE t.asset_id = a.id AND t.operation_type = 'buy' 
+             ORDER BY t.operation_date DESC LIMIT 1), a.currency_code
+        ) as current_price_currency
+    FROM portfolio pl
+    JOIN assets a ON pl.asset_id = a.id
+    WHERE pl.quantity > 0
 ");
+$stmt->execute();
 $portfolio_assets = $stmt->fetchAll();
 
-// Повторяем цикл с отладкой
+// Инициализируем переменные
 $rub_amount = 0;
 $usdt_amount = 0;
 $usd_amount = 0;
 $eur_amount = 0;
 $investments_value = 0;
-$liquidity_value = 0;  // ← ДОБАВЬТЕ ЭТУ СТРОКУ
-
-$debug_log = [];
+$liquidity_value = 0;
+$total_usd = 0;
 
 foreach ($portfolio_assets as $asset) {
-    $value = 0;
+    $quantity = floatval($asset['quantity']);
+    $current_price = floatval($asset['current_price']);
+    $current_price_currency = $asset['current_price_currency'];
+    $symbol = $asset['symbol'];
     
-    switch ($asset['symbol']) {
-        case 'RUB':
-            $rub_amount += $asset['quantity'];
-            $value = $asset['quantity'] / $usd_rub_rate;
-            $liquidity_value += $value;  // ← Добавляем в ликвидность
-            break;
-        case 'USDT':
-            $usdt_amount += $asset['quantity'];
-            $value = $asset['quantity'];
-            $liquidity_value += $value;  // ← Добавляем в ликвидность
-            break;
-        case 'USD':
-            $usd_amount += $asset['quantity'];
-            $value = $asset['quantity'];
-            $liquidity_value += $value;  // ← Добавляем в ликвидность
-            break;
-        case 'EUR':
-            $eur_amount += $asset['quantity'];
-            $value = $asset['quantity'];
-            $liquidity_value += $value;  // ← Добавляем в ликвидность
-            break;
-        default:
-            if ($asset['average_buy_price'] > 0) {
-                $value = $asset['quantity'] * $asset['average_buy_price'];
-                $investments_value += $value;  // ← ТОЛЬКО СЮДА
-            }
-            break;
+    $value_usd = 0;
+    
+    // ========== ЛИКВИДНЫЕ АКТИВЫ (фиат и стейблкоины) ==========
+    if ($symbol == 'RUB') {
+        $rub_amount += $quantity;
+        $value_usd = $quantity / $usd_rub_rate;
+        $liquidity_value += $value_usd;
     }
+    elseif ($symbol == 'USD') {
+        $usd_amount += $quantity;
+        $value_usd = $quantity;
+        $liquidity_value += $value_usd;
+    }
+    elseif ($symbol == 'USDT' || $symbol == 'USDC') {
+        $usdt_amount += $quantity;
+        $value_usd = $quantity;
+        $liquidity_value += $value_usd;
+    }
+    elseif ($symbol == 'EUR') {
+        $eur_amount += $quantity;
+        $value_usd = $quantity;
+        $liquidity_value += $value_usd;
+    }
+    // ========== ИНВЕСТИЦИОННЫЕ АКТИВЫ ==========
+    else {
+        // Если есть текущая рыночная цена
+        if ($current_price > 0) {
+            $price_in_usd = $current_price;
+            
+            // Конвертируем цену в USD если нужно
+            if ($current_price_currency == 'RUB') {
+                $price_in_usd = $current_price / $usd_rub_rate;
+            }
+            elseif ($current_price_currency == 'EUR') {
+                $price_in_usd = $current_price * 1.08;
+            }
+            
+            $value_usd = $quantity * $price_in_usd;
+        } 
+        // Если нет рыночной цены, используем историческую
+        elseif ($asset['average_buy_price'] > 0) {
+            $avg_price = floatval($asset['average_buy_price']);
+            $avg_currency = $asset['portfolio_currency'] ?: $asset['asset_currency'];
+            
+            if ($avg_currency == 'RUB') {
+                $value_usd = ($quantity * $avg_price) / $usd_rub_rate;
+            } else {
+                $value_usd = $quantity * $avg_price;
+            }
+        }
+        
+        $investments_value += $value_usd;
+    }
+    
+    $total_usd = $liquidity_value + $investments_value;
 }
 
-// Итоговая стоимость
-$total_usd = $liquidity_value + $investments_value;
+// Если нет данных или всё равно 0 - показываем 1
+if ($total_usd <= 0) {
+    $total_usd = 1;
+}
 
-// Конвертируем RUB в USD по текущему курсу
+// Конвертируем в рубли
+$total_rub = $total_usd * $usd_rub_rate;
 $rub_in_usd = $rub_amount / $usd_rub_rate;
 
-// Конвертируем в рубли по актуальному курсу
-$total_rub = $total_usd * $usd_rub_rate;
-$liquidity_rub = $liquidity_value * $usd_rub_rate;
-$investments_rub = $investments_value * $usd_rub_rate;
-
-// Сохраняем для отображения в шапке
-$rub_amount_display = $rub_amount; // Для отображения количества RUB
-$usdt_amount_display = $usdt_amount; // Для отображения количества USDT
+// Сохраняем для отображения
+$rub_amount_display = $rub_amount;
+$usdt_amount_display = $usdt_amount;
 
 // ============================================================================
 // РАСЧЕТ ДОХОДНОСТИ ПОРТФЕЛЯ
 // ============================================================================
 
-// 1. ВЛОЖЕНО = СУММА ВСЕХ ПОПОЛНЕНИЙ (только фиатные валюты)
+// 1. ВЛОЖЕНО = СУММА ВСЕХ ПОПОЛНЕНИЙ
 $total_invested_usd = 0;
 
 $stmt = $pdo->query("
@@ -698,15 +654,13 @@ $stmt = $pdo->query("
 ");
 $deposits_total = $stmt->fetch();
 
-// Конвертируем все пополнения в USD
 $total_invested_usd += $deposits_total['usd_deposits'];
-$total_invested_usd += $deposits_total['eur_deposits']; // EUR ≈ USD
+$total_invested_usd += $deposits_total['eur_deposits'];
 $total_invested_usd += $deposits_total['rub_deposits'] / $usd_rub_rate;
 
-// Вложено в рублях (для отображения)
 $total_invested_rub = $total_invested_usd * $usd_rub_rate;
 
-// 2. ПРИБЫЛЬ = ТЕКУЩАЯ СТОИМОСТЬ - ВЛОЖЕНО
+// 2. ПРИБЫЛЬ
 $profit_usd = $total_usd - $total_invested_usd;
 $profit_rub = $total_rub - $total_invested_rub;
 
@@ -717,19 +671,8 @@ if ($total_invested_usd > 0) {
     $profit_percent = 0;
 }
 
-// Определяем класс для цвета
-$profit_class = '';
-$profit_icon = '';
-if ($profit_usd > 0) {
-    $profit_class = 'positive';
-    $profit_icon = 'fa-arrow-up';
-} elseif ($profit_usd < 0) {
-    $profit_class = 'negative';
-    $profit_icon = 'fa-arrow-down';
-} else {
-    $profit_class = 'neutral';
-    $profit_icon = 'fa-minus';
-}
+// Определяем иконку
+$profit_icon = $profit_usd >= 0 ? 'fa-arrow-up' : 'fa-arrow-down';
 
 // ============================================================================
 // ПОЛУЧАЕМ ТЕКУЩУЮ СТОИМОСТЬ КРИПТОАКТИВОВ ИЗ ПОРТФЕЛЯ
@@ -835,41 +778,151 @@ $eth_percent = $eth_cost > 0 ? round(($eth_cost / $total_crypto_value) * 100, 1)
 $altcoins_percent = $altcoins_cost > 0 ? round(($altcoins_cost / $total_crypto_value) * 100, 1) : 0;
 $stablecoins_percent = $stablecoins_left > 0 ? round(($stablecoins_left / $total_crypto_value) * 100, 1) : 0;
 
-// Получаем активы пользователя (объединяем одинаковые активы с разных площадок)
+// Получаем активы пользователя с расширенной информацией для новой таблицы
 $stmt = $pdo->query("
     SELECT 
         a.id,
         a.symbol,
-        a.name,
-        a.type,
+        MIN(a.name) as name,
+        MIN(a.type) as type,
+        MIN(a.currency_code) as currency_code,
         SUM(p.quantity) as total_quantity,
-        -- Расчет средневзвешенной цены
+        -- Средневзвешенная цена
         CASE 
-            WHEN a.symbol IN ('USDT', 'USDC') THEN (
-                SELECT COALESCE(SUM(quantity * price) / NULLIF(SUM(quantity), 0), 1)
-                FROM trades t
-                WHERE t.asset_id IN (
-                    SELECT id FROM assets WHERE symbol IN ('USD', 'USDT', 'USDC')
-                )
-                AND t.operation_type = 'buy'
-            )
-            ELSE SUM(p.quantity * COALESCE(p.average_buy_price, 0)) / NULLIF(SUM(p.quantity), 0)
+            WHEN SUM(p.quantity) = 0 THEN 0
+            ELSE SUM(p.quantity * COALESCE(p.average_buy_price, 0)) / SUM(p.quantity)
         END as avg_price,
-        a.currency_code,
-        GROUP_CONCAT(DISTINCT p.platform_id ORDER BY p.platform_id SEPARATOR ',') as platform_ids
+        -- Стоимость покупки
+        SUM(p.quantity * COALESCE(p.average_buy_price, 0)) as purchase_cost,
+        -- Текущая цена из последней покупки (связываем по asset_id)
+        COALESCE(
+            (SELECT price FROM trades t 
+             WHERE t.asset_id = a.id
+             AND t.operation_type = 'buy' 
+             ORDER BY t.operation_date DESC LIMIT 1), 0
+        ) as current_price,
+        -- Валюта текущей цены
+        COALESCE(
+            (SELECT price_currency FROM trades t 
+             WHERE t.asset_id = a.id
+             AND t.operation_type = 'buy' 
+             ORDER BY t.operation_date DESC LIMIT 1), 'USD'
+        ) as current_price_currency
     FROM portfolio p
     JOIN assets a ON p.asset_id = a.id
     WHERE p.quantity > 0
-    GROUP BY a.id, a.symbol, a.name, a.type, a.currency_code  -- ← ДОБАВЬТЕ ВСЕ ПОЛЯ ИЗ SELECT
-    ORDER BY SUM(p.quantity) * COALESCE(
-        (SELECT rate FROM exchange_rates 
-         WHERE from_currency = a.currency_code 
-         AND to_currency = 'USD' 
-         AND date = CURDATE()
-        ), 1
-    ) DESC
+    GROUP BY a.symbol
+    ORDER BY 
+        CASE 
+            WHEN MIN(a.type) = 'crypto' THEN 1
+            WHEN MIN(a.type) = 'stock' THEN 2
+            WHEN MIN(a.type) = 'etf' THEN 3
+            WHEN MIN(a.type) = 'currency' THEN 4
+            WHEN MIN(a.type) = 'bond' THEN 5
+            ELSE 6
+        END,
+        SUM(p.quantity * COALESCE(p.average_buy_price, 0)) DESC
 ");
-$assets = $stmt->fetchAll();
+
+$my_assets = $stmt->fetchAll();
+
+foreach ($my_assets as &$asset) {
+    $quantity = floatval($asset['total_quantity']);
+    $avg_price = floatval($asset['avg_price']);
+    $current_price = floatval($asset['current_price']);
+    $current_price_currency = $asset['current_price_currency'];
+    $purchase_cost = floatval($asset['purchase_cost']);
+    
+    // Для RUB особая логика
+    if ($asset['symbol'] == 'RUB') {
+        $asset['avg_price_formatted'] = '—';
+        $asset['purchase_cost_formatted'] = '—';
+        $asset['current_price_formatted'] = '—';
+        $asset['current_value_formatted'] = '—';
+        $asset['profit_formatted'] = '—';
+        $asset['profit_percent_formatted'] = '—';
+        $asset['profit_class'] = 'profit-neutral';
+        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ');
+        continue;
+    }
+    
+    // Конвертируем текущую цену в USD для расчёта
+    $price_for_profit = $current_price;
+    if ($current_price_currency == 'RUB') {
+        $price_for_profit = $current_price / $usd_rub_rate;
+    } elseif ($current_price_currency == 'EUR') {
+        $price_for_profit = $current_price * 1.08;
+    }
+    
+    // Текущая стоимость в USD
+    $current_value = $quantity * $price_for_profit;
+    
+    // Прибыль/убыток
+    $profit = $current_value - $purchase_cost;
+    $profit_percent = $purchase_cost > 0 ? ($profit / $purchase_cost) * 100 : 0;
+    
+    $asset['current_value'] = $current_value;
+    $asset['profit'] = $profit;
+    $asset['profit_percent'] = $profit_percent;
+    
+    // ============================================================
+    // ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА
+    // ============================================================
+    
+    // Стейблкоины (USDT, USDC) - как валюта, без запятой
+    if ($asset['type'] == 'crypto' && ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC')) {
+        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ');
+    }
+    // Остальные криптовалюты - с запятой
+    elseif ($asset['type'] == 'crypto') {
+        if ($quantity < 1) {
+            $formatted = rtrim(rtrim(number_format($quantity, 8, ',', ' '), '0'), ',');
+            $asset['quantity_formatted'] = $formatted;
+        } else {
+            $formatted = number_format($quantity, 8, ',', ' ');
+            $formatted = rtrim(rtrim($formatted, '0'), ',');
+            $asset['quantity_formatted'] = $formatted;
+        }
+    }
+    // Акции
+    elseif ($asset['type'] == 'stock') {
+        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ') . ' шт';
+    }
+    // Валюты (USD, EUR и др.)
+    elseif ($asset['type'] == 'currency') {
+        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ');
+    }
+    // Облигации
+    elseif ($asset['type'] == 'bond') {
+        $asset['quantity_formatted'] = number_format($quantity, 2, ',', ' ');
+    }
+    // Остальные типы
+    else {
+        $asset['quantity_formatted'] = number_format($quantity, 2, ',', ' ');
+    }
+    
+    // ============================================================
+    // ФОРМАТИРОВАНИЕ ОСТАЛЬНЫХ ПОЛЕЙ
+    // ============================================================
+    
+    $asset['avg_price_formatted'] = $avg_price > 0 ? number_format($avg_price, 2, '.', ' ') : '—';
+    $asset['purchase_cost_formatted'] = $purchase_cost > 0 ? number_format($purchase_cost, 2, '.', ' ') : '—';
+    $asset['current_price_formatted'] = $current_price > 0 ? number_format($current_price, 2, '.', ' ') : '—';
+    $asset['current_value_formatted'] = $current_value > 0 ? number_format($current_value, 2, '.', ' ') : '—';
+    
+    if ($profit != 0) {
+        $asset['profit_formatted'] = ($profit > 0 ? '+' : '') . number_format(abs($profit), 2, '.', ' ');
+        $asset['profit_percent_formatted'] = ($profit_percent > 0 ? '+' : '') . number_format(abs($profit_percent), 2, '.', ' ');
+        $asset['profit_class'] = $profit > 0 ? 'profit-positive' : 'profit-negative';
+    } else {
+        $asset['profit_formatted'] = '0';
+        $asset['profit_percent_formatted'] = '0';
+        $asset['profit_class'] = 'profit-neutral';
+    }
+}
+// ========== ГЛАВНОЕ: УНИЧТОЖАЕМ ССЫЛКУ ПОСЛЕ ЦИКЛА ==========
+unset($asset);
+// ============================================================
 
 // Получаем лимитные ордера
 $stmt = $pdo->query("
@@ -1105,6 +1158,28 @@ function translateSector($sectorName) {
     return $translations[$sectorName] ?? $sectorName;
 }
 
+// Функция для перевода названий секторов (для РФ)
+function translateSectorRu($sectorName) {
+    $translations = [
+        'Energy' => 'Энергетика',
+        'Financial' => 'Финансы',
+        'Technology' => 'Технологии',
+        'Healthcare' => 'Здравоохранение',
+        'Consumer Cyclical' => 'Потребительский сектор',
+        'Consumer Defensive' => 'Защитный сектор',
+        'Industrials' => 'Промышленность',
+        'Communication Services' => 'Связь и медиа',
+        'Utilities' => 'Коммунальные услуги',
+        'Real Estate' => 'Недвижимость',
+        'Basic Materials' => 'Сырьевые материалы',
+        'Materials' => 'Материалы',
+        'Нефть и газ' => 'Нефть и газ',
+        'Другое' => 'Другое'
+    ];
+    
+    return $translations[$sectorName] ?? $sectorName;
+}
+
 // Получаем распределение по секторам для иностранных акций
 $stmt = $pdo->query("
     SELECT 
@@ -1148,25 +1223,71 @@ if (!$has_en_data) {
     $en_sectors = [];
 }
 
+// ============================================================================
+// АВТОМАТИЧЕСКИЙ РАСЧЁТ РАСПРЕДЕЛЕНИЯ ПО СЕКТОРАМ ДЛЯ РОССИЙСКИХ АКЦИЙ
+// ============================================================================
+
+// Получаем все российские акции из портфеля с их секторами
 $stmt = $pdo->query("
     SELECT 
-        sector_name,
-        percentage
-    FROM stock_sectors_ru 
-    ORDER BY percentage DESC
+        COALESCE(a.sector, 'Другое') as sector_name,
+        a.id as asset_id,
+        a.symbol,
+        a.name,
+        p.quantity,
+        p.average_buy_price,
+        p.currency_code,
+        -- Рассчитываем стоимость в USD
+        CASE 
+            WHEN p.currency_code = 'RUB' THEN (p.quantity * COALESCE(p.average_buy_price, 0)) / " . $usd_rub_rate . "
+            ELSE p.quantity * COALESCE(p.average_buy_price, 0)
+        END as value_usd
+    FROM portfolio p
+    JOIN assets a ON p.asset_id = a.id
+    WHERE a.type IN ('stock', 'etf') 
+        AND a.currency_code = 'RUB'
+        AND p.quantity > 0
+    ORDER BY value_usd DESC
 ");
-$ru_sectors = $stmt->fetchAll();
 
-$has_ru_data = false;
-foreach ($ru_sectors as $sector) {
-    if ($sector['percentage'] > 0) {
-        $has_ru_data = true;
-        break;
+$ru_assets = $stmt->fetchAll();
+
+// Группируем по секторам
+$ru_sectors_data = [];
+$total_ru_value_usd = 0;
+
+foreach ($ru_assets as $asset) {
+    $sector = $asset['sector_name'];
+    $value_usd = floatval($asset['value_usd']);
+    
+    if (!isset($ru_sectors_data[$sector])) {
+        $ru_sectors_data[$sector] = 0;
     }
+    $ru_sectors_data[$sector] += $value_usd;
+    $total_ru_value_usd += $value_usd;
 }
-if (!$has_ru_data) {
-    $ru_sectors = [];
+
+// Формируем массив для отображения с процентами
+$ru_sectors = [];
+if ($total_ru_value_usd > 0) {
+    foreach ($ru_sectors_data as $sector_name => $value_usd) {
+        $percentage = round(($value_usd / $total_ru_value_usd) * 100, 1);
+        if ($percentage > 0) {
+            $ru_sectors[] = [
+                'original_name' => $sector_name,           // сохраняем оригинал
+                'sector_name' => translateSectorRu($sector_name), // переведённое название
+                'percentage' => $percentage,
+                'value_usd' => $value_usd
+            ];
+        }
+    }
+    // Сортируем по убыванию процента
+    usort($ru_sectors, function($a, $b) {
+        return $b['percentage'] <=> $a['percentage'];
+    });
 }
+
+$has_ru_data = !empty($ru_sectors);
 
 $stmt = $pdo->query("
     SELECT 
@@ -1321,23 +1442,22 @@ function addTrade($pdo, $type, $platform_id, $from_platform_id, $asset_id, $quan
             $existing = $stmt->fetch();
             
             if ($existing) {
-                // Пересчитываем среднюю цену
                 $new_quantity = $existing['quantity'] + $quantity;
                 $new_avg_price = (($existing['quantity'] * $existing['average_buy_price']) + ($quantity * $price)) / $new_quantity;
                 
                 $stmt = $pdo->prepare("
                     UPDATE portfolio 
-                    SET quantity = ?, average_buy_price = ? 
+                    SET quantity = ?, average_buy_price = ?, network = COALESCE(?, network)
                     WHERE id = ?
                 ");
-                $stmt->execute([$new_quantity, $new_avg_price, $existing['id']]);
+                $stmt->execute([$new_quantity, $new_avg_price, $network, $existing['id']]);
             } else {
-                // Добавляем новый актив
+                // Добавляем новый актив (с поддержкой сети)
                 $stmt = $pdo->prepare("
-                    INSERT INTO portfolio (asset_id, platform_id, quantity, average_buy_price, currency_code)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO portfolio (asset_id, platform_id, quantity, average_buy_price, currency_code, network)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 ");
-                $stmt->execute([$asset_id, $platform_id, $quantity, $price, $price_currency]);
+                $stmt->execute([$asset_id, $platform_id, $quantity, $price, $price_currency, $network]);
             }
             
         } elseif ($type == 'sell') {
@@ -1519,15 +1639,21 @@ function addTransfer($pdo, $from_platform_id, $to_platform_id, $asset_id, $quant
         $asset = $stmt->fetch();
         $currency_code = $asset['currency_code'] ?? null;
         
-        // Добавляем на платформу получателя
+        // ============================================================================
+        // ДОБАВЛЯЕМ НА ПЛАТФОРМУ ПОЛУЧАТЕЛЯ (с поддержкой сети)
+        // ============================================================================
         $stmt = $pdo->prepare("
-            INSERT INTO portfolio (asset_id, platform_id, quantity, currency_code)
-            VALUES (?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
+            INSERT INTO portfolio (asset_id, platform_id, quantity, currency_code, network)
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+                quantity = quantity + VALUES(quantity),
+                network = COALESCE(VALUES(network), network)
         ");
-        $stmt->execute([$asset_id, $to_platform_id, $quantity, $currency_code]);
+        $stmt->execute([$asset_id, $to_platform_id, $quantity, $currency_code, $to_network]);
         
-        // Обрабатываем комиссию, если есть
+        // ============================================================================
+        // ОБРАБАТЫВАЕМ КОМИССИЮ, если есть
+        // ============================================================================
         if ($commission > 0 && !empty($commission_currency)) {
             // Находим актив для комиссии
             $stmt = $pdo->prepare("SELECT id FROM assets WHERE symbol = ?");
@@ -1869,7 +1995,7 @@ function getPurchaseHistory($pdo, $asset_id, $platform_id) {
 // ============================================================================
 
 function getPlatformBalance($pdo, $platform_id) {
-    try {
+    try {        
         $stmt = $pdo->prepare("
             SELECT 
                 a.id as asset_id,
@@ -1879,6 +2005,7 @@ function getPlatformBalance($pdo, $platform_id) {
                 p.quantity,
                 p.average_buy_price,
                 p.currency_code,
+                p.network,
                 CASE 
                     WHEN a.symbol = 'RUB' THEN p.quantity / (SELECT rate FROM exchange_rates WHERE from_currency = 'USD' AND to_currency = 'RUB' ORDER BY date DESC LIMIT 1)
                     WHEN a.symbol IN ('USDT', 'USDC', 'USD') THEN p.quantity
@@ -1889,6 +2016,7 @@ function getPlatformBalance($pdo, $platform_id) {
             WHERE p.platform_id = ? AND p.quantity > 0
             ORDER BY value_usd DESC
         ");
+        
         $stmt->execute([$platform_id]);
         $assets = $stmt->fetchAll();
         
@@ -1901,7 +2029,7 @@ function getPlatformBalance($pdo, $platform_id) {
             'total_value_usd' => $total_value_usd,
             'total_value_rub' => $total_value_usd * (isset($GLOBALS['usd_rub_rate']) ? $GLOBALS['usd_rub_rate'] : 92.50)
         ];
-    } catch (Exception $e) {
+    } catch (Exception $e) {        
         return [
             'success' => false,
             'error' => $e->getMessage(),
@@ -1924,6 +2052,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     if (isset($_POST['action'])) {
         switch ($_POST['action']) {
+            case 'get_asset_distribution':
+                $asset_id = intval($_POST['asset_id'] ?? 0);
+                $symbol = $_POST['symbol'] ?? '';
+                
+                if (!$asset_id && !$symbol) {
+                    echo json_encode(['success' => false, 'message' => 'Актив не указан']);
+                    exit;
+                }
+                
+                // Если передан symbol, найдем asset_id
+                if (!$asset_id && $symbol) {
+                    $stmt = $pdo->prepare("SELECT id FROM assets WHERE symbol = ?");
+                    $stmt->execute([$symbol]);
+                    $asset = $stmt->fetch();
+                    $asset_id = $asset ? $asset['id'] : 0;
+                }
+                
+                // Получаем распределение по площадкам
+                $stmt = $pdo->prepare("
+                    SELECT 
+                        pl.name as platform_name,
+                        p.quantity,
+                        p.network
+                    FROM portfolio p
+                    JOIN platforms pl ON p.platform_id = pl.id
+                    WHERE p.asset_id = ? AND p.quantity > 0
+                    ORDER BY p.quantity DESC
+                ");
+                $stmt->execute([$asset_id]);
+                $platforms = $stmt->fetchAll();
+                
+                // Получаем распределение по сетям (только для крипто)
+                $stmt = $pdo->prepare("
+                    SELECT 
+                        COALESCE(p.network, 'Без сети') as network,
+                        SUM(p.quantity) as quantity
+                    FROM portfolio p
+                    WHERE p.asset_id = ? AND p.quantity > 0
+                    GROUP BY p.network
+                    ORDER BY quantity DESC
+                ");
+                $stmt->execute([$asset_id]);
+                $networks = $stmt->fetchAll();
+                
+                // Общее количество
+                $total = array_sum(array_column($platforms, 'quantity'));
+                
+                echo json_encode([
+                    'success' => true,
+                    'total_quantity' => $total,
+                    'platforms' => $platforms,
+                    'networks' => $networks
+                ]);
+                exit;
+                break;
+
+            case 'get_asset_purchase_history':
+                $asset_id = intval($_POST['asset_id'] ?? 0);
+                
+                if (!$asset_id) {
+                    echo json_encode(['success' => false, 'message' => 'Актив не указан']);
+                    exit;
+                }
+                
+                $stmt = $pdo->prepare("
+                    SELECT 
+                        t.operation_date,
+                        t.quantity,
+                        t.price,
+                        t.price_currency,
+                        p.name as platform_name
+                    FROM trades t
+                    JOIN platforms p ON t.platform_id = p.id
+                    WHERE t.asset_id = ? AND t.operation_type = 'buy'
+                    ORDER BY t.operation_date DESC
+                ");
+                $stmt->execute([$asset_id]);
+                $history = $stmt->fetchAll();
+                
+                echo json_encode([
+                    'success' => true,
+                    'history' => $history
+                ]);
+                exit;
+                break;
             case 'add_trade':
                 $result = addTrade(
                     $pdo,
@@ -2100,6 +2313,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$symbol, $name, $type, $currency_code, $sector]);
                     
                     $asset_id = $pdo->lastInsertId();
+                    
+                    // Также добавляем валюту в таблицу currencies, если это криптовалюта или новая фиатная валюта
+                    if ($type === 'crypto') {
+                        // Проверяем, существует ли валюта в таблице currencies
+                        $check_currency = $pdo->prepare("SELECT code FROM currencies WHERE code = ?");
+                        $check_currency->execute([$symbol]);
+                        $currency_exists = $check_currency->fetch();
+                        
+                        if (!$currency_exists) {
+                            $stmt_currency = $pdo->prepare("
+                                INSERT INTO currencies (code, name, type) 
+                                VALUES (?, ?, 'crypto')
+                            ");
+                            $stmt_currency->execute([$symbol, $name]);
+                        }
+                    } elseif ($type === 'currency') {
+                        // Для валют также добавляем в таблицу currencies
+                        $check_currency = $pdo->prepare("SELECT code FROM currencies WHERE code = ?");
+                        $check_currency->execute([$symbol]);
+                        $currency_exists = $check_currency->fetch();
+                        
+                        if (!$currency_exists) {
+                            $stmt_currency = $pdo->prepare("
+                                INSERT INTO currencies (code, name, type, symbol) 
+                                VALUES (?, ?, 'fiat', ?)
+                            ");
+                            $stmt_currency->execute([$symbol, $name, $symbol]);
+                        }
+                    }
                     
                     // Очищаем буфер и отправляем JSON
                     if (ob_get_length()) ob_clean();

@@ -50,26 +50,39 @@
                             </div>
                             <input type="hidden" id="newAssetType" value="">
                         </div>
+
+                        <!-- БЛОК ВЫБОРА РЫНКА (добавить после выбора типа актива) -->
+                        <div class="form-group" id="marketSelectGroup" style="display: none;">
+                            <label><i class="fas fa-globe"></i> Рынок *</label>
+                            <div class="market-buttons">
+                                <button type="button" class="market-type-btn" data-market="ru">🇷🇺 РФ (RUB)</button>
+                                <button type="button" class="market-type-btn" data-market="foreign">🌍 Иностранный (USD)</button>
+                            </div>
+                            <input type="hidden" id="newAssetMarket" value="">
+                            <small style="color: #6b7a8f; display: block; margin-top: 5px;">
+                                <i class="fas fa-info-circle"></i> Выберите рынок для акции/ETF/облигации
+                            </small>
+                        </div>
                         
                         <!-- БЛОК ВЫБОРА СЕКТОРА (с отдельным классом) -->
-                    <div class="form-group" id="sectorSelectGroup" style="display: none;">
-                        <label><i class="fas fa-chart-line"></i> Сектор *</label>
-                        <div class="sector-buttons" id="sectorButtons">
-                            <?php
-                            $stmt = $pdo->query("SELECT name_ru, name FROM sectors WHERE type IN ('stock', 'etf') AND is_active = 1 ORDER BY name_ru");
-                            $sectors_list = $stmt->fetchAll();
-                            foreach ($sectors_list as $sector):
-                            ?>
-                            <button type="button" class="sector-option-btn" data-sector="<?= htmlspecialchars($sector['name']) ?>">
-                                <?= htmlspecialchars($sector['name_ru']) ?>
-                            </button>
-                            <?php endforeach; ?>
+                        <div class="form-group" id="sectorSelectGroup" style="display: none;">
+                            <label><i class="fas fa-chart-line"></i> Сектор *</label>
+                            <div class="sector-buttons" id="sectorButtons">
+                                <?php
+                                $stmt = $pdo->query("SELECT name_ru, name FROM sectors WHERE type IN ('stock', 'etf') AND is_active = 1 ORDER BY name_ru");
+                                $sectors_list = $stmt->fetchAll();
+                                foreach ($sectors_list as $sector):
+                                ?>
+                                <button type="button" class="sector-option-btn" data-sector="<?= htmlspecialchars($sector['name']) ?>">
+                                    <?= htmlspecialchars($sector['name_ru']) ?>
+                                </button>
+                                <?php endforeach; ?>
+                            </div>
+                            <input type="hidden" id="newAssetSector" value="">
+                            <small style="color: #6b7a8f; display: block; margin-top: 5px;">
+                                <i class="fas fa-info-circle"></i> Выберите сектор для акции/ETF
+                            </small>
                         </div>
-                        <input type="hidden" id="newAssetSector" value="">
-                        <small style="color: #6b7a8f; display: block; margin-top: 5px;">
-                            <i class="fas fa-info-circle"></i> Выберите сектор для акции/ETF
-                        </small>
-                    </div>
                     </form>
                 </div>
                 <div class="modal-footer">
@@ -81,7 +94,28 @@
             </div>
         </div>
 
-        <!-- Модальное окно истории покупок -->
+        <!-- Модальное окно деталей актива -->
+        <div class="modal-overlay" id="assetDetailsModal">
+            <div class="modal" style="max-width: 650px; max-height: 80vh;">
+                <div class="modal-header">
+                    <h2><i class="fas fa-chart-pie" style="color: #ff9f4a;"></i> <span id="assetDetailsSymbol"></span></h2>
+                    <button class="modal-close" onclick="closeAssetDetailsModal()">&times;</button>
+                </div>
+                <div class="modal-body" id="assetDetailsBody" style="max-height: 60vh; overflow-y: auto;">
+                    <div style="text-align: center; padding: 30px;">
+                        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeAssetDetailsModal()">Закрыть</button>
+                    <button class="btn btn-primary" id="showHistoryBtn" style="background: #1a5cff;" onclick="showAssetPurchaseHistory()">
+                        <i class="fas fa-history"></i> Показать историю покупок
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Модальное окно истории покупок (оставляем старое или обновляем) -->
         <div class="modal-overlay" id="purchaseHistoryModal">
             <div class="modal" style="max-width: 500px;">
                 <div class="modal-header">
@@ -89,7 +123,15 @@
                     <button class="modal-close" onclick="closePurchaseHistoryModal()">&times;</button>
                 </div>
                 <div class="modal-body" id="purchaseHistoryBody">
-                    <!-- Данные будут вставлены через JavaScript -->
+                    <div style="text-align: center; padding: 30px;">
+                        <i class="fas fa-spinner fa-spin"></i> Загрузка...
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closePurchaseHistoryModal()">Закрыть</button>
+                    <button class="btn btn-primary" id="backToDistributionBtn" style="background: #ff9f4a;" onclick="closePurchaseHistoryModal(); showAssetDetails(currentAssetSymbol, currentAssetId);">
+                        <i class="fas fa-arrow-left"></i> Назад к распределению
+                    </button>
                 </div>
             </div>
         </div>
@@ -449,7 +491,7 @@
                             
                             <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="tradePopularPriceCurrencies">
                                 <?php
-                                $popular_currency_codes = ['RUB', 'USD', 'USDT'];
+                                $popular_currency_codes = ['USDT', 'RUB', 'USD'];
                                 $popular_price_currencies = array_filter($all_currencies, function($c) use ($popular_currency_codes) {
                                     return in_array($c['code'], $popular_currency_codes);
                                 });
@@ -482,7 +524,7 @@
                                 <label><i class="fas fa-calculator"></i> Итого</label>
                                 <input type="text" class="form-input" id="tradeTotal" value="0" style="width: 100%; background: var(--bg-tertiary); text-align: center; font-weight: 600; font-size: 18px;" readonly>
                                 <small style="color: #6b7a8f; display: block; margin-top: 5px; text-align: center;">
-                                    <i class="fas fa-info-circle"></i> Сумма списания (количество × цена + комиссия)
+                                    <i class="fas fa-info-circle"></i> <span id="tradeTotalQuantity"></span>
                                 </small>
                             </div>
                         </div>
@@ -752,10 +794,9 @@
                                 <input type="hidden" id="limitCurrency" value="">
                                 
                                 <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px;" id="limitPopularCurrencies">
+                                    <button type="button" class="quick-platform-btn" onclick="selectLimitCurrency('USDT')">USDT</button>
                                     <button type="button" class="quick-platform-btn" onclick="selectLimitCurrency('USD')">USD</button>
                                     <button type="button" class="quick-platform-btn" onclick="selectLimitCurrency('RUB')">RUB</button>
-                                    <button type="button" class="quick-platform-btn" onclick="selectLimitCurrency('EUR')">EUR</button>
-                                    <button type="button" class="quick-platform-btn" onclick="selectLimitCurrency('USDT')">USDT</button>
                                 </div>
                             </div>
                         </div>
@@ -1433,10 +1474,6 @@
                                     <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;" id="sellPopularAssets">
                                         <button type="button" class="quick-asset-btn" onclick="selectSellAssetFromQuick('BTC')">BTC</button>
                                         <button type="button" class="quick-asset-btn" onclick="selectSellAssetFromQuick('ETH')">ETH</button>
-                                        <button type="button" class="quick-asset-btn" onclick="selectSellAssetFromQuick('USDT')">USDT</button>
-                                        <button type="button" class="quick-asset-btn" onclick="selectSellAssetFromQuick('SOL')">SOL</button>
-                                        <button type="button" class="quick-asset-btn" onclick="selectSellAssetFromQuick('RUB')">RUB</button>
-                                        <button type="button" class="quick-asset-btn" onclick="selectSellAssetFromQuick('USD')">USD</button>
                                     </div>
                                 </div>
                                 
@@ -1453,10 +1490,8 @@
                                     
                                     <!-- ДОБАВИТЬ БЫСТРЫЕ КНОПКИ ВАЛЮТ ЦЕНЫ -->
                                     <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;" id="sellPopularPriceCurrencies">
-                                        <button type="button" class="quick-platform-btn" onclick="selectSellPriceCurrency('USD')">USD</button>
-                                        <button type="button" class="quick-platform-btn" onclick="selectSellPriceCurrency('RUB')">RUB</button>
                                         <button type="button" class="quick-platform-btn" onclick="selectSellPriceCurrency('USDT')">USDT</button>
-                                        <button type="button" class="quick-platform-btn" onclick="selectSellPriceCurrency('EUR')">EUR</button>
+                                        <button type="button" class="quick-platform-btn" onclick="selectSellPriceCurrency('RUB')">RUB</button>
                                     </div>
                                 </div>
                             </div>
@@ -1615,21 +1650,20 @@
                         </div>
                     </div>
                     
-                    <div style="background: #e3f2fd; padding: 10px 16px; border-radius: 12px;">
-                        <div style="font-size: 12px; color: #1976d2; font-weight: 500;">РУБЛИ</div>
+                    <div style="padding: 10px 16px; border-radius: 12px; border: 1px solid var(--border-color);">
+                        <div style="font-size: 12px; color: #1976d2; font-weight: 500;">Рубли</div>
                         <div style="font-weight: 600; margin-top: 2px;"><?= number_format($rub_in_usd, 2, '.', ' ') ?> $</div>
                         <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($rub_amount_display, 0, '.', ' ') ?> ₽</div>
                     </div>
                     
-                    <div style="background: #e8f5e9; padding: 10px 16px; border-radius: 12px;">
-                        <div style="font-size: 12px; color: #2e7d32; font-weight: 500;">ДОЛЛАРЫ</div>
+                    <div style="padding: 10px 16px; border-radius: 12px; border: 1px solid var(--border-color);">
+                        <div style="font-size: 12px; color: #1976d2; font-weight: 500;">Доллары</div>
                         <div style="font-weight: 600; margin-top: 2px;"><?= number_format($usd_amount + $usdt_amount, 2, '.', ' ') ?> $</div>
-                        <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($usd_amount, 2, '.', ' ') ?> USD</div>
-                        <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($usdt_amount, 2, '.', ' ') ?> USDT</div>
+                        <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($usd_amount, 2, '.', ' ') ?> USD / <?= number_format($usdt_amount, 2, '.', ' ') ?> USDT</div>
                     </div>
                     
-                    <div style="background: #fff3e0; padding: 10px 16px; border-radius: 12px;">
-                        <div style="font-size: 12px; color: #ed6c02; font-weight: 500;">ИНВЕСТИЦИИ</div>
+                    <div style="padding: 10px 16px; border-radius: 12px; border: 1px solid var(--border-color);">
+                        <div style="font-size: 12px; color: #1976d2; font-weight: 500;">Инвестиции</div>
                         <div style="font-weight: 600; margin-top: 2px;"><?= number_format($investments_value, 2, '.', ' ') ?> $</div>
                         <div style="font-size: 11px; color: #6b7a8f;"><?= number_format($investments_rub, 0, '.', ' ') ?> ₽</div>
                     </div>
@@ -1777,11 +1811,152 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </div>        
 
         <!-- КОНТЕЙНЕР С КАРТОЧКАМИ (резиновая верстка) -->
         <div class="cards-container">
-            
+            <!-- Карточка мои активы -->
+            <div class="card card-investments">
+                <div class="card-header">
+                    <h3 class="card-title"><i class="fas fa-coins"></i> Мои активы</h3>
+                    <span class="stat-badge"><?= count($my_assets) ?> активов</span>
+                </div>
+                
+                <div class="investments-table-wrapper">
+                    <table class="investments-table-new">
+                        <thead>
+                            <tr>
+                                <th>Актив</th>
+                                <th class="text-right">Количество</th>
+                                <th class="text-right">Средняя цена<br><span class="table-subtitle">покупки</span></th>
+                                <th class="text-right">Стоимость<br><span class="table-subtitle">покупки</span></th>
+                                <th class="text-right">Текущая цена</th>
+                                <th class="text-right">Текущая<br><span class="table-subtitle">стоимость</span></th>
+                                <th class="text-right">Доходность</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php 
+                            // Подготавливаем запрос для истории один раз вне цикла
+                            $stmt_history = $pdo->prepare("
+                                (SELECT 
+                                    t.operation_date as date,
+                                    t.quantity,
+                                    t.price,
+                                    t.price_currency,
+                                    p.name as platform,
+                                    'buy' as operation_type,
+                                    CONCAT('Покупка ', a.symbol) as description
+                                FROM trades t
+                                LEFT JOIN platforms p ON t.platform_id = p.id
+                                JOIN assets a ON t.asset_id = a.id
+                                WHERE t.asset_id = ? AND t.operation_type = 'buy')
+                                
+                                UNION ALL
+                                
+                                (SELECT 
+                                    t.operation_date as date,
+                                    t.quantity,
+                                    t.price,
+                                    t.price_currency,
+                                    p.name as platform,
+                                    'sell' as operation_type,
+                                    CONCAT('Продажа ', a.symbol) as description
+                                FROM trades t
+                                LEFT JOIN platforms p ON t.platform_id = p.id
+                                JOIN assets a ON t.asset_id = a.id
+                                WHERE t.asset_id = ? AND t.operation_type = 'sell')
+                                
+                                ORDER BY date DESC
+                            ");
+                            
+                            foreach ($my_assets as $asset): 
+                                // Пропускаем, если нет символа
+                                if (empty($asset['symbol'])) continue;
+                                
+                                // Получаем историю для текущего актива
+                                $stmt_history->execute([$asset['id'] ?? 0, $asset['id'] ?? 0]);
+                                $asset_history = $stmt_history->fetchAll();
+                                
+                                // Определяем иконку для актива
+                                $icon_map = [
+                                    'RUB' => '₽', 'USD' => '$', 'EUR' => '€',
+                                    'BTC' => '₿', 'ETH' => 'Ξ', 'USDT' => '₮',
+                                    'SOL' => '◎', 'BNB' => 'ⓑ'
+                                ];
+                                $icon = $icon_map[$asset['symbol']] ?? substr($asset['symbol'], 0, 2);
+                                
+                                // Определяем валюту для отображения
+                                $display_currency = ($asset['type'] == 'crypto' && $asset['symbol'] != 'USDT') ? $asset['symbol'] : ($asset['currency_code'] ?: 'USD');
+                                
+                                if ($asset['symbol'] == 'RUB') {
+                                    $display_currency = 'RUB';
+                                } elseif ($asset['type'] == 'stock' && $asset['currency_code'] == 'RUB') {
+                                    $display_currency = 'RUB';
+                                } elseif ($asset['type'] == 'stock') {
+                                    $display_currency = $asset['currency_code'] ?: 'USD';
+                                }
+                            ?>
+                            <tr onclick='showAssetDetails("<?= $asset['symbol'] ?>", <?= $asset['id'] ?? 0 ?>)' style="cursor: pointer;">
+                                <td>
+                                    <div class="asset-info">
+                                        <div class="asset-icon"><?= $icon ?></div>
+                                        <div>
+                                            <div class="asset-symbol"><?= htmlspecialchars($asset['symbol']) ?></div>
+                                            <div class="asset-name"><?= htmlspecialchars($asset['name'] ?? $asset['symbol']) ?></div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="text-right">
+                                    <?= $asset['quantity_formatted'] ?? number_format($asset['total_quantity'] ?? 0, 0, '.', ' ') ?>
+                                    <span class="asset-symbol-small"><?= htmlspecialchars($display_currency) ?></span>
+                                </td>
+                                <td class="text-right">
+                                    <?= $asset['avg_price_formatted'] ?? '—' ?>
+                                    <?php if (($asset['avg_price'] ?? 0) > 0): ?>
+                                    <span class="asset-symbol-small"><?= htmlspecialchars($asset['currency_code'] ?: 'USD') ?></span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="text-right">
+                                    <?= $asset['purchase_cost_formatted'] ?? '—' ?>
+                                    <?php if (($asset['purchase_cost'] ?? 0) > 0): ?>
+                                    <span class="asset-symbol-small"><?= htmlspecialchars($asset['currency_code'] ?: 'USD') ?></span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="text-right">
+                                    <?= $asset['current_price_formatted'] ?? '—' ?>
+                                    <?php if (($asset['current_price'] ?? 0) > 0): ?>
+                                    <span class="asset-symbol-small"><?= htmlspecialchars($asset['current_price_currency'] ?: 'USD') ?></span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="text-right">
+                                    <?= $asset['current_value_formatted'] ?? '—' ?>
+                                    <span class="asset-symbol-small"><?= htmlspecialchars($asset['currency_code'] ?: 'USD') ?></span>
+                                </td>
+                                <td class="text-right <?= $asset['profit_class'] ?? 'profit-neutral' ?>">
+                                    <?php if (($asset['profit'] ?? 0) != 0 || ($asset['purchase_cost'] ?? 0) > 0): ?>
+                                        <span class="profit-value"><?= $asset['profit_formatted'] ?? '0' ?> <?= htmlspecialchars($asset['currency_code'] ?: 'USD') ?></span>
+                                        <span class="profit-percent">(<?= $asset['profit_percent_formatted'] ?? '0' ?>%)</span>
+                                    <?php else: ?>
+                                        <span class="profit-value">—</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                            
+                            <?php if (empty($my_assets)): ?>
+                            <tr>
+                                <td colspan="7" style="text-align: center; padding: 40px; color: var(--text-tertiary);">
+                                    <i class="fas fa-box-open" style="font-size: 48px; opacity: 0.3; margin-bottom: 16px; display: block;"></i>
+                                    Нет активов в портфеле
+                                </td>
+                            </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             <!-- Карточка структуры портфеля -->
             <div class="card card-structure">
                 <div class="card-header">
@@ -1984,6 +2159,60 @@
             </div>
             <?php endif; ?>
 
+            <!-- Карточка фондовый РФ (только если есть данные) -->
+            <?php if ($has_ru_data && !empty($ru_sectors)): ?>
+            <div class="card card-ru-stocks">
+                <div class="card-header">
+                    <h3 class="card-title"><i class="fas fa-chart-pie" style="color: #2ecc71;"></i> Фондовый (РФ)</h3>
+                    <span class="stat-badge">По секторам</span>
+                </div>
+                <div class="pie-chart">
+                    <?php
+                    $colors = ['#2ecc71', '#3498db', '#f1c40f', '#e67e22', '#95a5a6', '#e74c3c', '#9b59b6', '#1abc9c'];
+                    $gradient = [];
+                    $current = 0;
+                    
+                    foreach ($ru_sectors as $index => $sector) {
+                        $gradient[] = $colors[$index % count($colors)] . ' ' . $current . '% ' . ($current + $sector['percentage']) . '%';
+                        $current += $sector['percentage'];
+                    }
+                    
+                    // Рассчитываем общую стоимость в рублях
+                    $total_ru_rub = 0;
+                    foreach ($ru_sectors as $sector) {
+                        $total_ru_rub += $sector['value_usd'] * $usd_rub_rate;
+                    }
+                    ?>
+                    <div class="pie" style="background: conic-gradient(<?= implode(', ', $gradient) ?>);"></div>
+                    <div class="chart-legend">
+                        <?php foreach ($ru_sectors as $index => $sector): ?>
+                        <div class="legend-item" style="align-items: flex-start;">
+                            <span class="legend-color" style="width: 12px; height: 12px; background: <?= $colors[$index % count($colors)] ?>; border-radius: 4px; margin-top: 4px;"></span>
+                            <span style="flex: 1;"><?= htmlspecialchars($sector['sector_name']) ?></span>
+                            <span class="legend-value" style="text-align: right;">
+                                <div><?= $sector['percentage'] ?>%</div>
+                                <div style="font-size: 11px; color: #6b7a8f; font-weight: normal;">
+                                    $<?= number_format($sector['value_usd'], 0, '.', ' ') ?>
+                                </div>
+                            </span>
+                        </div>
+                        <?php endforeach; ?>
+                        
+                        <!-- БЛОК "ВСЕГО" -->
+                        <div class="legend-item" style="border-top: 1px solid #edf2f7; margin-top: 8px; padding-top: 8px;">
+                            <span style="font-weight: 600;">Всего</span>
+                            <span class="legend-value" style="font-weight: 600; text-align: right;">
+                                $<?= number_format($total_ru_value_usd, 0, '.', ' ') ?>
+                                <div style="font-size: 11px; color: #6b7a8f; font-weight: normal;">
+                                    <?= number_format($total_ru_rub, 0, '.', ' ') ?> ₽
+                                </div>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
             <!-- Карточка вклады (только если есть данные) -->
             <?php if (!empty($deposit_currencies)): ?>
             <div class="card card-deposits">
@@ -2018,150 +2247,6 @@
                 </div>
             </div>
             <?php endif; ?>
-
-            <!-- Карточка мои активы -->
-            <div class="card card-investments">
-                <div class="card-header">
-                    <h3 class="card-title"><i class="fas fa-coins"></i> Мои активы</h3>
-                    <span class="stat-badge"><?= count($assets) ?> активов</span>
-                </div>
-                <table class="investments-table">
-                    <tbody>
-                        <?php foreach ($assets as $asset): 
-                            if ($asset['symbol'] == 'RUB') {
-                                $stmt = $pdo->prepare("
-                                    SELECT 
-                                        d.deposit_date as date,
-                                        d.amount as quantity,
-                                        NULL as price,
-                                        d.currency_code as price_currency,
-                                        p.name as platform,
-                                        'deposit' as operation_type,
-                                        CONCAT('Пополнение ', d.currency_code) as description
-                                    FROM deposits d
-                                    LEFT JOIN platforms p ON d.platform_id = p.id
-                                    WHERE d.currency_code = 'RUB'
-                                    ORDER BY d.deposit_date DESC
-                                ");
-                                $stmt->execute();
-                                $asset_history = $stmt->fetchAll();
-                                
-                                $avg_price_display = '—';
-                                $avg_currency = '';
-                            } else {
-                                // Используем среднюю цену из объединенного запроса
-                                $avg_price = $asset['avg_price'];
-                                
-                                // Новая логика форматирования средней цены
-                                // Убираем отображение валюты для USDT, USDC и фиатных валют (USD, RUB, EUR)
-                                if ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC' || 
-                                    $asset['symbol'] == 'USD' || $asset['symbol'] == 'RUB' || $asset['symbol'] == 'EUR') {
-                                    // Для стейблкоинов и фиатных валют не показываем валюту
-                                    $avg_price_display = number_format($avg_price, 2, '.', ' ');
-                                    $avg_currency = '';
-                                } elseif ($asset['type'] == 'crypto') {
-                                    // Для криптовалют: максимум 4 знака после запятой, убираем лишние нули
-                                    $formatted = number_format($avg_price, 4, '.', ' ');
-                                    // Убираем лишние нули в конце дробной части
-                                    $formatted = rtrim(rtrim($formatted, '0'), '.');
-                                    $avg_price_display = $formatted;
-                                    $avg_currency = ''; // Не показываем валюту для крипто
-                                } else {
-                                    // Для остальных активов (акции, ETF, облигации) показываем валюту
-                                    $avg_price_display = number_format($avg_price, 2, '.', ' ');
-                                    $avg_currency = $asset['currency_code'];
-                                }
-                                
-                                $stmt = $pdo->prepare("
-                                    (SELECT 
-                                        t.operation_date as date,
-                                        t.quantity,
-                                        t.price,
-                                        t.price_currency,
-                                        p.name as platform,
-                                        'buy' as operation_type,
-                                        CONCAT('Покупка ', a.symbol) as description
-                                    FROM trades t
-                                    LEFT JOIN platforms p ON t.platform_id = p.id
-                                    JOIN assets a ON t.asset_id = a.id
-                                    WHERE t.asset_id = ? AND t.operation_type = 'buy')
-                                    
-                                    UNION ALL
-                                    
-                                    (SELECT 
-                                        t.operation_date as date,
-                                        t.quantity,
-                                        t.price,
-                                        t.price_currency,
-                                        p.name as platform,
-                                        'sell' as operation_type,
-                                        CONCAT('Продажа ', a.symbol) as description
-                                    FROM trades t
-                                    LEFT JOIN platforms p ON t.platform_id = p.id
-                                    JOIN assets a ON t.asset_id = a.id
-                                    WHERE t.asset_id = ? AND t.operation_type = 'sell')
-                                    
-                                    ORDER BY date DESC
-                                ");
-                                
-                                $stmt->execute([$asset['id'], $asset['id']]);
-                                $asset_history = $stmt->fetchAll();
-                            }
-                        ?>
-                        <tr onclick='showAssetHistory(<?= json_encode([
-                            'symbol' => $asset['symbol'],
-                            'history' => $asset_history
-                        ], JSON_HEX_APOS | JSON_HEX_QUOT) ?>)' style="cursor: pointer;">
-                            <td class="investment-icon-cell">
-                                <div class="investment-icon">
-                                    <?php
-                                    $symbols = [
-                                        'RUB' => '₽', 'USD' => '$', 'EUR' => '€',
-                                        'BTC' => '₿', 'ETH' => 'Ξ', 'USDT' => '₮'
-                                    ];
-                                    echo $symbols[$asset['symbol']] ?? substr($asset['symbol'], 0, 2);
-                                    ?>
-                                </div>
-                            </td>
-                            <td class="investment-name-cell">
-                                <span class="investment-name"><?= htmlspecialchars($asset['symbol']) ?></span>
-                                <?php if (strpos($asset['platform_ids'] ?? '', ',') !== false): ?>
-                                    <span style="font-size: 10px; color: #6b7a8f; display: block;">на нескольких площадках</span>
-                                <?php endif; ?>
-                            </td>
-                            <td class="investment-amount-cell">
-                                <span class="investment-amount">
-                                    <?php
-                                    if ($asset['symbol'] == 'RUB') {
-                                        echo number_format($asset['total_quantity'], 0, '.', ' ');
-                                    } elseif ($asset['type'] == 'crypto') {
-                                        if (floor($asset['total_quantity']) == $asset['total_quantity']) {
-                                            echo number_format($asset['total_quantity'], 0, '.', ' ');
-                                        } else {
-                                            echo rtrim(rtrim(number_format($asset['total_quantity'], 8, '.', ' '), '0'), '.');
-                                        }
-                                    } elseif ($asset['type'] == 'stock') {
-                                        echo number_format($asset['total_quantity'], 0, '.', ' ') . ' шт';
-                                    } else {
-                                        echo number_format($asset['total_quantity'], 0, '.', ' ');
-                                    }
-                                    ?>
-                                </span>
-                            </td>
-                            <td class="investment-change-cell">
-                                <span class="investment-change">
-                                    <?php if ($avg_price_display !== '—' && $avg_price_display != ''): ?>
-                                        <?= $avg_price_display ?> <?= $avg_currency ?>
-                                    <?php else: ?>
-                                        —
-                                    <?php endif; ?>
-                                </span>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
 
             <!-- Карточка последние операции -->
             <div class="card card-operations" id="operationsContainer">

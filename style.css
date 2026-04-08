@@ -71,8 +71,8 @@ body {
    ============================================================================ */
 
 .cards-container {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
     gap: 24px;
     width: 100%;
     margin-bottom: 24px;
@@ -140,8 +140,8 @@ body {
 }
 
 .card-investments {
-    flex-basis: 500px;
-    flex-grow: 1;
+    grid-column: 1 / -1;  /* Растягиваем на всю ширину грида */
+    width: 100%;
 }
 
 .card-operations {
@@ -2749,14 +2749,6 @@ body.dark-theme {
     color: var(--accent-danger) !important;
 }
 
-.dark-theme .profit-positive {
-    background: linear-gradient(135deg, #0A3024, #0F3F2F) !important;
-}
-
-.dark-theme .profit-negative {
-    background: linear-gradient(135deg, #331111, #441111) !important;
-}
-
 /* Стили для модального окна активов площадки */
 .platform-assets-table {
     width: 100%;
@@ -3035,4 +3027,216 @@ body.dark-theme .sector-option-btn.active {
     background: var(--bg-tertiary);
     border-color: var(--border-color);
     color: var(--text-primary);
+}
+
+/* Стили для ползунка процента продажи */
+.sell-percent-slider {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    outline: none;
+    cursor: pointer;
+}
+
+.sell-percent-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ff9f4a;
+    border: 2px solid white;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sell-percent-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    background: #e8892c;
+}
+
+.sell-percent-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ff9f4a;
+    border: 2px solid white;
+    cursor: pointer;
+}
+
+/* Темная тема для ползунков */
+.dark-theme .sell-percent-slider {
+    background: linear-gradient(to right, #ff9f4a 0%, #ff9f4a 0%, #2A2F36 0%, #2A2F36 100%);
+}
+
+.dark-theme .sell-percent-slider::-webkit-slider-thumb {
+    background: #ff9f4a;
+    border: 2px solid var(--bg-secondary);
+}
+
+/* Кнопки выбора рынка */
+.market-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 5px;
+}
+
+.market-type-btn {
+    flex: 1 1 auto;
+    min-width: 120px;
+    padding: 10px 12px;
+    background: #f0f3f7;
+    border: 1px solid #e0e6ed;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #6b7a8f;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.market-type-btn:hover {
+    background: #e0e6ed;
+    border-color: #ff9f4a;
+    color: #ff9f4a;
+    transform: translateY(-1px);
+}
+
+.market-type-btn.active {
+    background: #ff9f4a;
+    border-color: #ff9f4a;
+    color: white;
+    box-shadow: 0 4px 8px rgba(255, 159, 74, 0.2);
+}
+
+
+/* ============================================================================
+   НОВАЯ ТАБЛИЦА АКТИВОВ
+   ============================================================================ */
+
+.investments-table-wrapper {
+    overflow-x: auto;
+    margin-top: 16px;
+}
+
+.investments-table-new {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.investments-table-new th,
+.investments-table-new td {
+    padding: 12px 8px;
+    border-bottom: 1px solid var(--border-color, #edf2f7);
+    vertical-align: middle;
+}
+
+.investments-table-new th {
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary, #6b7a8f);
+    background: transparent;  /* Убрали фон */
+    font-size: 13px;
+}
+
+.investments-table-new .text-right {
+    text-align: right;
+}
+
+.table-subtitle {
+    font-weight: normal;
+    font-size: 11px;
+    color: var(--text-tertiary, #95a5a6);
+}
+
+.asset-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.asset-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--bg-tertiary, #f0f3f7);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--accent-primary, #1a5cff);
+}
+
+.asset-symbol {
+    font-weight: 600;
+    color: var(--text-primary, #2c3e50);
+}
+
+.asset-name {
+    font-size: 11px;
+    color: var(--text-tertiary, #6b7a8f);
+}
+
+.asset-symbol-small {
+    font-size: 11px;
+    color: var(--text-tertiary, #95a5a6);
+    margin-left: 2px;
+}
+
+/* Стили для доходности - только цвет текста */
+.profit-positive {
+    color: #00a86b;
+}
+
+.profit-negative {
+    color: #e53e3e;
+}
+
+.profit-neutral {
+    color: var(--text-tertiary, #95a5a6);
+}
+
+.profit-value {
+    font-weight: 600;
+    display: block;
+}
+
+.profit-percent {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+/* Адаптивность для мобильных */
+@media (max-width: 768px) {
+    .investments-table-new {
+        font-size: 12px;
+    }
+    
+    .investments-table-new th,
+    .investments-table-new td {
+        padding: 8px 4px;
+    }
+    
+    .asset-icon {
+        width: 28px;
+        height: 28px;
+        font-size: 12px;
+    }
+    
+    .asset-symbol {
+        font-size: 12px;
+    }
+    
+    .profit-value {
+        font-size: 12px;
+    }
+    
+    .profit-percent {
+        font-size: 10px;
+    }
 }

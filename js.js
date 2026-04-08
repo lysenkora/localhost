@@ -3,11 +3,15 @@
 // ============================================================================
 
 const API_URL = 'get_operations.php';
+const API_URL_PHP = 'php.php';
 const depositModal = document.getElementById('depositModal');
 const tradeModal = document.getElementById('tradeModal');
 const transferModal = document.getElementById('transferModal');
 const tradeOperationType = document.getElementById('tradeOperationType');
 const confirmTradeBtnText = document.getElementById('confirmTradeBtnText');
+
+// Глобальные переменные для расходов
+let expenseCategories = [];
 
 let selectedTransferAsset = { id: null, symbol: '' };
 let selectedFromPlatform = { id: null, name: '' };
@@ -1046,6 +1050,27 @@ function calculateTradeTotal() {
     } else {
         totalField.value = formattedTotal;
     }
+
+    const totalQuantitySpan = document.getElementById('tradeTotalQuantity');
+    if (totalQuantitySpan) {
+        let resultDisplay = '0';
+        if (!isNaN(total) && isFinite(total) && total > 0) {
+            // Форматируем результат без округления и без валюты
+            let resultStr = total.toString();
+            if (resultStr.includes('e')) {
+                resultStr = total.toFixed(12);
+            }
+            let resultParts = resultStr.split('.');
+            resultParts[0] = resultParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            if (resultParts.length > 1 && resultParts[1]) {
+                let decimalPart = resultParts[1].replace(/0+$/, '');
+                resultDisplay = decimalPart.length > 0 ? resultParts[0] + '.' + decimalPart : resultParts[0];
+            } else {
+                resultDisplay = resultParts[0];
+            }
+        }
+        totalQuantitySpan.textContent = resultDisplay;
+    }
 }
 
 function updateTradeTotalCurrency() {
@@ -1235,7 +1260,7 @@ async function loadSellLots() {
     
     try {
         // ИСПРАВЛЕНИЕ: Отправляем запрос на get_operations.php, а не на index.php
-        const response = await fetch('get_operations.php', {
+        const response = await fetch(API_URL, {
             method: 'POST',
             body: formData
         });
@@ -1417,7 +1442,7 @@ async function confirmDeposit() {
     formData.append('notes', notes);  // ← ДОБАВЬТЕ
 
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -1515,7 +1540,7 @@ async function confirmTrade() {
     formData.append('notes', notes);
 
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -1611,7 +1636,7 @@ async function confirmTransfer() {
     formData.append('notes', notes);
 
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -1865,7 +1890,7 @@ async function saveNewPlatform() {
     formData.append('country', country);
 
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -2199,7 +2224,7 @@ async function saveNewCurrency() {
     formData.append('symbol', symbol);
 
     try {
-        const response = await fetch(API_URL, {
+        const response = await fetch(API_URL_PHP, {
             method: 'POST',
             body: formData
         });
@@ -2326,7 +2351,7 @@ function setActiveAssetType(type) {
         hiddenInput.value = type;
     }
     
-    // ПОКАЗЫВАЕМ/СКРЫВАЕМ ВЫБОР СЕКТОРА (не скрываем родителя!)
+    // ПОКАЗЫВАЕМ/СКРЫВАЕМ ВЫБОР СЕКТОРА
     const sectorGroup = document.getElementById('sectorSelectGroup');
     if (sectorGroup) {
         if (type === 'stock' || type === 'etf') {
@@ -2340,6 +2365,40 @@ function setActiveAssetType(type) {
             document.getElementById('newAssetSector').value = '';
         }
     }
+    
+    // ========== НОВЫЙ КОД: ПОКАЗЫВАЕМ/СКРЫВАЕМ ВЫБОР РЫНКА ==========
+    const marketGroup = document.getElementById('marketSelectGroup');
+    if (marketGroup) {
+        if (type === 'stock' || type === 'etf' || type === 'bond') {
+            marketGroup.style.display = 'block';
+        } else {
+            marketGroup.style.display = 'none';
+            // Сбрасываем выбранный рынок
+            document.querySelectorAll('.market-type-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById('newAssetMarket').value = '';
+        }
+    }
+}
+
+function setActiveMarket(market) {
+    // Убираем активный класс у всех кнопок рынка
+    document.querySelectorAll('.market-type-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Добавляем активный класс выбранной кнопке
+    const selectedBtn = document.querySelector(`.market-type-btn[data-market="${market}"]`);
+    if (selectedBtn) {
+        selectedBtn.classList.add('active');
+    }
+    
+    // Сохраняем выбранный рынок
+    const hiddenInput = document.getElementById('newAssetMarket');
+    if (hiddenInput) {
+        hiddenInput.value = market;
+    }
 }
 
 function getSelectedAssetType() {
@@ -2352,35 +2411,29 @@ async function saveNewAsset() {
     const name = document.getElementById('newAssetName').value.trim();
     const type = getSelectedAssetType();
     const sector = document.getElementById('newAssetSector').value;
+    const market = document.getElementById('newAssetMarket').value; // Добавлено: выбранный рынок (ru/foreign)
     
-    // АВТОМАТИЧЕСКОЕ ОПРЕДЕЛЕНИЕ ВАЛЮТЫ
+    // АВТОМАТИЧЕСКОЕ ОПРЕДЕЛЕНИЕ ВАЛЮТЫ НА ОСНОВЕ РЫНКА
     let currencyCode = null;
     
-    if (type === 'stock') {
-        // Иностранные акции (с .US или известные тикеры)
-        if (symbol.endsWith('.US') || 
-            ['TSLA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'NVDA', 'NFLX'].includes(symbol)) {
-            currencyCode = 'USD';
-        } 
-        // Российские акции
-        else if (['SBER', 'GAZP', 'LKOH', 'YNDX', 'ROSN', 'VTBR', 'TATN', 'NLMK'].includes(symbol)) {
+    if (type === 'stock' || type === 'etf' || type === 'bond') {
+        if (market === 'ru') {
             currencyCode = 'RUB';
-        }
-        // По умолчанию для акций - USD
-        else {
+        } else if (market === 'foreign') {
             currencyCode = 'USD';
         }
-    }
-    else if (type === 'crypto') {
+    } else if (type === 'crypto') {
         currencyCode = 'USD';
-    }
-    else if (type === 'currency') {
+    } else if (type === 'currency') {
         currencyCode = symbol;
     }
-    else if (type === 'etf') {
-        currencyCode = 'USD';
+    
+    // ПРОВЕРКА: для акций, ETF и облигаций рынок обязателен
+    if ((type === 'stock' || type === 'etf' || type === 'bond') && !market) {
+        showNotification('error', 'Ошибка', 'Выберите рынок (РФ или Иностранный)');
+        return;
     }
-
+    
     // ПРОВЕРКА: для акций и ETF сектор обязателен
     if ((type === 'stock' || type === 'etf') && !sector) {
         showNotification('error', 'Ошибка', 'Выберите сектор для акции/ETF');
@@ -2409,9 +2462,10 @@ async function saveNewAsset() {
     formData.append('type', type);
     formData.append('currency_code', currencyCode || '');
     formData.append('sector', sector || '');
+    formData.append('market', market); // для отладки/логирования
 
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {
             method: 'POST',
             body: formData
         });
@@ -2430,6 +2484,7 @@ async function saveNewAsset() {
         if (result.success && result.asset_id) {
             showNotification('success', 'Успешно', 'Актив добавлен');
             
+            // Добавляем в глобальный массив
             assetsData.push({
                 id: result.asset_id,
                 symbol: symbol,
@@ -2439,6 +2494,7 @@ async function saveNewAsset() {
                 sector: sector
             });
             
+            // Выбираем актив в зависимости от контекста
             if (currentModalContext.source === 'transfer') {
                 selectAsset(result.asset_id, symbol);
             } else {
@@ -2452,6 +2508,25 @@ async function saveNewAsset() {
         }
     } catch (error) {
         showNotification('error', 'Ошибка сети', 'Не удалось добавить актив: ' + error.message);
+    }
+}
+
+function setActiveMarket(market) {
+    // Убираем активный класс у всех кнопок рынка
+    document.querySelectorAll('.market-type-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    
+    // Добавляем активный класс выбранной кнопке
+    const selectedBtn = document.querySelector(`.market-type-btn[data-market="${market}"]`);
+    if (selectedBtn) {
+        selectedBtn.classList.add('active');
+    }
+    
+    // Сохраняем выбранный рынок
+    const hiddenInput = document.getElementById('newAssetMarket');
+    if (hiddenInput) {
+        hiddenInput.value = market;
     }
 }
 
@@ -2476,6 +2551,14 @@ function closeExpenseModal() {
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Обработчики для кнопок выбора рынка
+    document.querySelectorAll('.market-type-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const market = this.getAttribute('data-market');
+            setActiveMarket(market);
+        });
+    });
+
     // Закрытие модального окна продажи по клику на оверлей
     const sellModalElement = document.getElementById('sellModal');
     if (sellModalElement) {
@@ -4301,7 +4384,7 @@ document.getElementById('themeToggleBtn').addEventListener('click', function() {
     this.disabled = true;
     
     // Отправляем запрос на сохранение темы
-    fetch(API_URL, {  // было window.location.href
+    fetch(API_URL_PHP, {  // было window.location.href
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -4454,7 +4537,7 @@ async function confirmLimitOrder() {
     formData.append('notes', notes);
 
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -4674,7 +4757,7 @@ async function confirmExecuteOrder() {
     }
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -4739,7 +4822,7 @@ async function confirmCancelOrder() {
     formData.append('order_id_int', parseInt(currentOrderId)); // Как число
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -4875,7 +4958,7 @@ async function saveNote() {
     if (noteId) formData.append('note_id', noteId);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -4938,7 +5021,7 @@ async function confirmDeleteNote() {
     formData.append('note_id', currentDeleteNoteData.id);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -4988,7 +5071,7 @@ async function archiveNote(noteId, archive) {
     formData.append('archive', archive ? 1 : 0);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -5037,7 +5120,7 @@ async function loadNotes() {
     formData.append('include_archived', 0); // 0 - только неархивированные
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -5067,7 +5150,7 @@ async function loadArchivedNotes() {
     formData.append('include_archived', 1); // 1 - только архивированные
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -5257,7 +5340,7 @@ async function addNetworkToDatabase(networkData) {
     formData.append('full_name', networkData.full_name);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -6251,7 +6334,19 @@ function openSectorAssetsModal(sectorName, displayName) {
         let rubStr = Math.round(valueRubNum).toString();
         rubStr = rubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
         
-        const valueFormatted = `$${usdFormatted}<br><span style="font-size: 11px; color: #6b7a8f;">${rubStr} ₽</span>`;
+        let valueFormatted;
+        if (asset.currency_code === 'RUB' || asset.symbol === 'RUB') {
+            // Для рублевых активов - показываем только рубли
+            const rubAmount = (asset.quantity * asset.average_buy_price).toFixed(2);
+            const rubFormatted = rubAmount.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            valueFormatted = `${rubFormatted} ₽`;
+        } else {
+            // Для остальных - USD и RUB
+            const usdFormatted = asset.value_usd.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            const rubValue = (asset.value_usd * usdRubRate).toFixed(0);
+            const rubFormatted = rubValue.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            valueFormatted = `$${usdFormatted}<br><span style="font-size: 11px; color: #6b7a8f;">${rubFormatted} ₽</span>`;
+        }
         
         // Определяем иконку для актива
         let assetIcon = getAssetIcon(asset.symbol);
@@ -6538,7 +6633,7 @@ async function loadPurchaseHistoryForSell(assetId, platformId) {
     formData.append('platform_id', platformId);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -6744,12 +6839,10 @@ async function loadPlatformBalance(platformId, platformName) {
     
     if (!balanceBlock) return;
     
-    // ИЗМЕНЕНИЕ: Обновляем заголовок с названием площадки
     if (balanceTitle) {
         balanceTitle.innerHTML = `<i class="fas fa-wallet"></i> Баланс: ${platformName}`;
     }
     
-    // Показываем блок с загрузкой
     balanceBlock.style.display = 'block';
     assetsList.innerHTML = '<div style="text-align: center; padding: 15px; color: #6b7a8f;"><i class="fas fa-spinner fa-spin"></i> Загрузка баланса...</div>';
     totalDiv.style.display = 'none';
@@ -6759,7 +6852,7 @@ async function loadPlatformBalance(platformId, platformName) {
     formData.append('platform_id', platformId);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {
             method: 'POST',
             body: formData
         });
@@ -6770,7 +6863,6 @@ async function loadPlatformBalance(platformId, platformName) {
             const totalUsd = result.total_value_usd;
             const totalRub = result.total_value_rub;
             
-            // Форматируем общую стоимость
             let totalUsdStr = totalUsd.toFixed(2);
             let totalUsdParts = totalUsdStr.split('.');
             totalUsdParts[0] = totalUsdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -6789,7 +6881,6 @@ async function loadPlatformBalance(platformId, platformName) {
                 `;
                 totalDiv.style.display = 'none';
             } else {
-                // Формируем список активов (остается без изменений)
                 let html = '';
                 
                 assets.forEach(asset => {
@@ -6797,7 +6888,6 @@ async function loadPlatformBalance(platformId, platformName) {
                     const valueUsd = parseFloat(asset.value_usd);
                     const valueRub = valueUsd * usdRubRate;
                     
-                    // Форматируем количество
                     let quantityFormatted = '';
                     if (asset.asset_type === 'crypto') {
                         if (Math.floor(quantity) === quantity) {
@@ -6815,7 +6905,6 @@ async function loadPlatformBalance(platformId, platformName) {
                         quantityFormatted = parts[0] + (parts[1] ? '.' + parts[1] : '');
                     }
                     
-                    // Форматируем стоимость
                     let usdStr = valueUsd.toFixed(2);
                     let usdParts = usdStr.split('.');
                     usdParts[0] = usdParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -6824,8 +6913,15 @@ async function loadPlatformBalance(platformId, platformName) {
                     let rubStr = Math.round(valueRub).toString();
                     rubStr = rubStr.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
                     
-                    // Определяем иконку для актива
                     let assetIcon = getAssetIcon(asset.symbol);
+                    
+                    // Формируем строку с сетью, если она есть
+                    let networkHtml = '';
+                    if (asset.network && asset.asset_type === 'crypto') {
+                        networkHtml = `<div style="font-size: 10px; color: #6b7a8f; margin-top: 2px;">
+                            <i class="fas fa-network-wired"></i> ${asset.network}
+                        </div>`;
+                    }
                     
                     html += `
                         <div class="platform-asset-item" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; margin-right:20px; border-bottom: 1px solid var(--border-color, #edf2f7); cursor: pointer;" 
@@ -6839,6 +6935,7 @@ async function loadPlatformBalance(platformId, platformName) {
                                 <div>
                                     <div style="font-weight: 500; font-size: 13px;">${asset.symbol}</div>
                                     <div style="font-size: 10px; color: #6b7a8f;">${quantityFormatted}</div>
+                                    ${networkHtml}
                                 </div>
                             </div>
                             <div style="text-align: right;">
@@ -6851,12 +6948,9 @@ async function loadPlatformBalance(platformId, platformName) {
                 
                 assetsList.innerHTML = html;
                 totalDiv.style.display = 'block';
-                
-                // Форматируем общую стоимость для отображения в нижней части
                 totalUsdSpan.innerHTML = `$${totalUsdFormatted} (${totalRubStr} ₽)`;
             }
             
-            // Сохраняем данные для быстрого доступа
             currentPlatformBalanceData = {
                 platformId: platformId,
                 platformName: platformName,
@@ -6870,6 +6964,7 @@ async function loadPlatformBalance(platformId, platformName) {
             totalDiv.style.display = 'none';
         }
     } catch (error) {
+        console.error('Error loading platform balance:', error);
         assetsList.innerHTML = '<div style="text-align: center; padding: 15px; color: #e53e3e;">Ошибка загрузки</div>';
         totalDiv.style.display = 'none';
     }
@@ -6899,14 +6994,31 @@ function selectTransferAssetFromBalance(assetId, symbol, assetType, quantityForm
     // Показываем уведомление с количеством
     //showNotification('info', 'Актив выбран', `${symbol}: доступно ${quantityFormatted}`);
     
-    // Опционально: можно автоматически заполнить количество для перевода
+    // АВТОМАТИЧЕСКИ ЗАПОЛНЯЕМ КОЛИЧЕСТВО ДЛЯ ПЕРЕВОДА
     const amountInput = document.getElementById('transferAmount');
     if (amountInput) {
         // Извлекаем числовое значение из отформатированной строки
+        // quantityFormatted приходит в виде "123.456" или "1 234.567"
         const numericValue = parseFloat(quantityFormatted.replace(/\s/g, '').replace(',', '.'));
-        if (!isNaN(numericValue)) {
-            // Не заполняем автоматически, чтобы пользователь сам решил сколько переводить
-            // Но можно добавить кнопку "Перевести всё" позже
+        if (!isNaN(numericValue) && numericValue > 0) {
+            // Форматируем число с пробелами
+            let formattedValue = numericValue.toString();
+            
+            // Для криптовалют - больше знаков после запятой
+            if (assetType === 'crypto') {
+                formattedValue = numericValue.toFixed(6).replace(/\.?0+$/, '');
+            } else {
+                formattedValue = numericValue.toFixed(2).replace(/\.?0+$/, '');
+            }
+            
+            // Добавляем пробелы в целой части
+            let parts = formattedValue.split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+            
+            amountInput.value = parts.join('.');
+            
+            // Триггерим событие input для возможных расчетов (если есть)
+            amountInput.dispatchEvent(new Event('input'));
         }
     }
 }
@@ -6986,7 +7098,7 @@ async function saveExpenseCategory() {
     formData.append('color', color);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -7060,7 +7172,7 @@ async function loadExpensesList() {
     formData.append('offset', 0);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -7074,6 +7186,84 @@ async function loadExpensesList() {
     } catch (error) {
         body.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">Ошибка загрузки</div>';
     }
+}
+
+// Загрузка категорий расходов
+async function loadExpenseCategories() {
+    const container = document.getElementById('expenseCategoriesList');
+    if (!container) return;
+    
+    container.innerHTML = '<div style="text-align: center; padding: 10px; width: 100%; color: #6b7a8f;"><i class="fas fa-spinner fa-spin"></i> Загрузка категорий...</div>';
+    
+    const formData = new FormData();
+    formData.append('action', 'get_expense_categories');
+    
+    try {
+        const response = await fetch(API_URL_PHP, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success && result.categories) {
+            expenseCategories = result.categories; // сохраняем глобально
+            displayExpenseCategories(result.categories);
+        } else {
+            container.innerHTML = '<div style="text-align: center; padding: 10px; width: 100%; color: #e53e3e;">Ошибка загрузки категорий</div>';
+        }
+    } catch (error) {
+        container.innerHTML = '<div style="text-align: center; padding: 10px; width: 100%; color: #e53e3e;">Ошибка загрузки</div>';
+    }
+}
+
+// Отображение категорий расходов
+function displayExpenseCategories(categories) {
+    const container = document.getElementById('expenseCategoriesList');
+    if (!container) return;
+    
+    if (!categories || categories.length === 0) {
+        container.innerHTML = '<div style="text-align: center; padding: 10px; width: 100%; color: #6b7a8f;">Нет категорий расходов</div>';
+        return;
+    }
+    
+    let html = '';
+    categories.forEach(category => {
+        html += `
+            <button type="button" class="quick-asset-btn" 
+                    data-category-id="${category.id}"
+                    onclick="selectExpenseCategory(${category.id}, '${category.name_ru.replace(/'/g, "\\'")}')"
+                    style="background: ${category.color}20; border-color: ${category.color}; color: ${category.color};">
+                <i class="${category.icon}"></i> ${category.name_ru}
+            </button>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+// Выбор категории расхода
+function selectExpenseCategory(categoryId, categoryName) {
+    // Убираем активный класс у всех кнопок
+    document.querySelectorAll('#expenseCategoriesList .quick-asset-btn').forEach(btn => {
+        btn.classList.remove('active');
+        btn.style.opacity = '0.7';
+    });
+    
+    // Добавляем активный класс выбранной кнопке
+    const selectedBtn = document.querySelector(`#expenseCategoriesList .quick-asset-btn[data-category-id="${categoryId}"]`);
+    if (selectedBtn) {
+        selectedBtn.classList.add('active');
+        selectedBtn.style.opacity = '1';
+    }
+    
+    // Сохраняем выбранную категорию
+    const hiddenInput = document.getElementById('expenseCategoryId');
+    if (hiddenInput) {
+        hiddenInput.value = categoryId;
+    }
+    
+    // Показываем уведомление
+    // showNotification('info', 'Категория выбрана', categoryName);
 }
 
 // Функция отображения списка расходов
@@ -7182,7 +7372,7 @@ async function deleteExpense(expenseId) {
     formData.append('expense_id', expenseId);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -7295,7 +7485,7 @@ async function loadExpensePlatformBalance(platformId, platformName) {
     formData.append('platform_id', platformId);
     
     try {
-        const response = await fetch(API_URL, {  // было window.location.href
+        const response = await fetch(API_URL_PHP, {  // было window.location.href
             method: 'POST',
             body: formData
         });
@@ -7488,7 +7678,7 @@ async function saveExpense() {
     formData.append('expense_date', expenseDate);
     
     try {
-        const response = await fetch(API_URL, {
+        const response = await fetch(API_URL_PHP, {
             method: 'POST',
             body: formData
         });
@@ -7523,7 +7713,6 @@ async function loadSellData() {
     
     const price = parseFloat(document.getElementById('sellPrice').value.replace(/\s/g, '')) || 0;
     if (price <= 0) {
-        //showNotification('warning', 'Внимание', 'Введите цену продажи');
         return;
     }
     
@@ -7539,7 +7728,7 @@ async function loadSellData() {
     formData.append('price_currency', selectedSellPriceCurrency.code);
     
     try {
-        const response = await fetch('get_operations.php', {
+        const response = await fetch(API_URL, {
             method: 'POST',
             body: formData
         });
@@ -7551,12 +7740,9 @@ async function loadSellData() {
             
             const totalQuantity = result.total_quantity;
             const avgPrice = result.avg_price;
-            const totalValue = totalQuantity * price;
-            const profit = totalValue - (totalQuantity * avgPrice);
-            const profitPercent = (totalQuantity * avgPrice) > 0 ? (profit / (totalQuantity * avgPrice)) * 100 : 0;
             
             let html = `
-                <!-- БЛОК 1: ИСТОРИЯ ПОКУПОК с возможностью выбора -->
+                <!-- БЛОК 1: ИСТОРИЯ ПОКУПОК с ползунками процентов -->
                 <div style="margin-bottom: 20px;">
                     <div style="background: var(--bg-tertiary); border-radius: 12px; padding: 12px; margin-bottom: 15px;">
                         <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
@@ -7567,17 +7753,6 @@ async function loadSellData() {
                             <span>Средняя цена покупки:</span>
                             <span>${formatAmount(avgPrice, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}</span>
                         </div>
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span>Ожидаемая выручка:</span>
-                            <span>${formatAmount(totalValue, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; padding-top: 8px; border-top: 1px solid var(--border-color);">
-                            <span>Ожидаемая прибыль:</span>
-                            <span style="color: ${profit >= 0 ? '#00a86b' : '#e53e3e'}">
-                                ${profit >= 0 ? '+' : ''}${formatAmount(profit, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}
-                                (${profitPercent.toFixed(1)}%)
-                            </span>
-                        </div>
                     </div>
                     
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
@@ -7587,81 +7762,194 @@ async function loadSellData() {
                                 <i class="fas fa-check-double"></i> Выбрать всё
                             </button>
                             <button type="button" id="sellClearSelectionBtn" class="quick-platform-btn" style="font-size: 11px; padding: 4px 10px;">
-                                <i class="fas fa-times"></i> Сбросить
+                                <i class="fas fa-times"></i> Сбросить все
                             </button>
                         </div>
                     </div>
                     
-                    <div style="max-height: 300px; overflow-y: auto;">
+                    <div style="max-height: 400px; overflow-y: auto;" id="purchasesListContainer">
             `;
             
             if (sellPurchaseHistory.length === 0) {
-                html += '<div style="text-align: center; padding: 20px; color: #6b7a8f;">Нет истории покупок</div>';
-            } else {
-                // Группируем покупки по платформам для отображения
-                const groupedPurchases = {};
-                sellPurchaseHistory.forEach(purchase => {
-                    const key = purchase.platform_name;
-                    if (!groupedPurchases[key]) {
-                        groupedPurchases[key] = [];
-                    }
-                    groupedPurchases[key].push(purchase);
-                });
+    html += '<div style="text-align: center; padding: 20px; color: #6b7a8f;">Нет истории покупок</div>';
+} else {
+    // Сохраняем все покупки в глобальную переменную для доступа из других функций
+    window.sellPurchaseItems = [];
+    
+    // Сортируем покупки по дате (сначала старые - для FIFO)
+    const sortedPurchases = [...sellPurchaseHistory].sort((a, b) => {
+        return new Date(a.operation_date) - new Date(b.operation_date);
+    });
+    
+    for (const purchase of sortedPurchases) {
+        const purchaseId = `purchase_${purchase.trade_id}`;
+        const quantity = parseFloat(purchase.quantity); // Это уже остаток!
+        const originalQuantity = parseFloat(purchase.original_quantity || purchase.quantity);
+        const soldQuantity = parseFloat(purchase.sold_quantity || 0);
+        const hasPartialSale = purchase.has_partial_sale || false;
+        const actualSales = purchase.actual_sales || [];
+        
+        const quantityFormatted = formatAmount(quantity, selectedSellAsset.symbol);
+        const originalQuantityFormatted = formatAmount(originalQuantity, selectedSellAsset.symbol);
+        
+        const purchasePrice = parseFloat(purchase.price);
+        const purchasePriceFormatted = formatAmount(purchasePrice, purchase.price_currency);
+        const totalCost = originalQuantity * purchasePrice;
+        const totalCostFormatted = formatAmount(totalCost, purchase.price_currency);
+        const remainingCost = quantity * purchasePrice;
+        const remainingCostFormatted = formatAmount(remainingCost, purchase.price_currency);
+        
+        const expectedRevenue = quantity * price;
+        const expectedRevenueFormatted = formatAmount(expectedRevenue, selectedSellPriceCurrency.code);
+        const profitPurchase = expectedRevenue - remainingCost;
+        const profitPercentPurchase = remainingCost > 0 ? (profitPurchase / remainingCost) * 100 : 0;
+        const profitColor = profitPurchase >= 0 ? '#00a86b' : '#e53e3e';
+        const profitSign = profitPurchase >= 0 ? '+' : '';
+        
+        // Расчет данных по проданной части (ФИКСИРОВАННЫЕ данные из БД)
+        let soldPartHtml = '';
+        if (hasPartialSale && actualSales.length > 0) {
+            // Суммируем все продажи по этому лоту
+            let totalSoldQuantity = 0;
+            let totalSellTotal = 0;
+            let totalBuyTotal = 0;
+            let totalProfit = 0;
+            
+            actualSales.forEach(sale => {
+                totalSoldQuantity += parseFloat(sale.sold_quantity);
+                totalSellTotal += parseFloat(sale.sell_total);
+                totalBuyTotal += parseFloat(sale.buy_total);
+                totalProfit += parseFloat(sale.profit);
+            });
+            
+            const totalSoldQuantityFormatted = formatAmount(totalSoldQuantity, selectedSellAsset.symbol);
+            const totalSellTotalFormatted = formatAmount(totalSellTotal, selectedSellPriceCurrency.code);
+            const totalProfitFormatted = formatAmount(Math.abs(totalProfit), selectedSellPriceCurrency.code);
+            const totalProfitSign = totalProfit >= 0 ? '+' : '';
+            const totalProfitColor = totalProfit >= 0 ? '#00a86b' : '#e53e3e';
+            const totalProfitPercent = totalBuyTotal > 0 ? (totalProfit / totalBuyTotal) * 100 : 0;
+            
+            // Формируем детали по каждой продаже
+            let salesDetails = '';
+            if (actualSales.length === 1) {
+                const sale = actualSales[0];
+                const sellPriceFormatted = formatAmount(parseFloat(sale.sell_price), sale.sell_currency);
+                const sellDate = new Date(sale.sell_date).toLocaleDateString('ru-RU');
+                const saleProfitFormatted = formatAmount(Math.abs(parseFloat(sale.profit)), selectedSellPriceCurrency.code);
+                const saleProfitSign = parseFloat(sale.profit) >= 0 ? '+' : '';
+                const saleProfitColor = parseFloat(sale.profit) >= 0 ? '#00a86b' : '#e53e3e';
                 
-                for (const [platformName, purchases] of Object.entries(groupedPurchases)) {
-                    html += `
-                        <div style="margin-bottom: 15px;">
-                            <div style="font-weight: 600; margin-bottom: 8px; padding: 4px 8px; background: var(--bg-tertiary); border-radius: 8px;">
-                                <i class="fas fa-building"></i> ${platformName}
-                            </div>
-                    `;
-                    
-                    purchases.forEach(purchase => {
-                        const date = new Date(purchase.operation_date).toLocaleDateString('ru-RU');
-                        const quantity = purchase.quantity;
-                        const quantityFormatted = formatAmount(quantity, selectedSellAsset.symbol);
-                        const purchasePrice = purchase.price;
-                        const purchasePriceFormatted = formatAmount(purchasePrice, purchase.price_currency);
-                        const totalCost = quantity * purchasePrice;
-                        const totalCostFormatted = formatAmount(totalCost, purchase.price_currency);
-                        const expectedRevenue = quantity * price;
-                        const expectedRevenueFormatted = formatAmount(expectedRevenue, selectedSellPriceCurrency.code);
-                        const profitPurchase = expectedRevenue - totalCost;
-                        const profitPercentPurchase = totalCost > 0 ? (profitPurchase / totalCost) * 100 : 0;
-                        const purchaseId = `purchase_${purchase.trade_id}`;
-                        const isSelected = selectedPurchases && selectedPurchases.has(purchaseId);
-                        
-                        html += `
-                            <div class="sell-purchase-item" data-purchase-id="${purchaseId}" data-quantity="${quantity}" data-price="${purchasePrice}" data-currency="${purchase.price_currency}" data-platform-name="${platformName}"
-                                 style="display: flex; justify-content: space-between; align-items: center; padding: 12px; border: 2px solid ${isSelected ? '#ff9f4a' : 'var(--border-color)'}; border-radius: 12px; margin-bottom: 8px; cursor: pointer; background: ${isSelected ? 'rgba(255, 159, 74, 0.1)' : 'transparent'}; transition: all 0.2s;"
-                                 onclick="togglePurchaseSelection('${purchaseId}', ${quantity}, ${purchasePrice}, '${purchase.price_currency}', '${platformName}')">
-                                <div style="flex: 1;">
-                                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                                        <div>
-                                            <div style="font-weight: 500;">${date}</div>
-                                            <div style="font-size: 12px; color: #6b7a8f;">${quantityFormatted} ${selectedSellAsset.symbol}</div>
-                                            <div style="font-size: 11px; color: #6b7a8f;">по ${purchasePriceFormatted} ${purchase.price_currency}</div>
-                                            <div style="font-size: 11px; color: #6b7a8f;">Итого: ${totalCostFormatted} ${purchase.price_currency}</div>
-                                        </div>
-                                        <div style="text-align: right;">
-                                            <div style="font-weight: 500;">${expectedRevenueFormatted} ${selectedSellPriceCurrency.code}</div>
-                                            <div style="color: ${profitPurchase >= 0 ? '#00a86b' : '#e53e3e'}; font-weight: 500;">
-                                                ${profitPurchase >= 0 ? '+' : ''}${formatAmount(profitPurchase, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}
-                                                (${profitPercentPurchase >= 0 ? '+' : ''}${profitPercentPurchase.toFixed(1)}%)
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div style="margin-left: 12px;">
-                                    <input type="checkbox" ${isSelected ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;" onclick="event.stopPropagation(); togglePurchaseSelection('${purchaseId}', ${quantity}, ${purchasePrice}, '${purchase.price_currency}', '${platformName}')">
-                                </div>
-                            </div>
-                        `;
-                    });
-                    
-                    html += `</div>`;
-                }
+                salesDetails = `
+                    <div style="font-size: 10px; color: var(--text-tertiary); margin-top: 4px;">
+                        🏷️ Продано ${formatAmount(parseFloat(sale.sold_quantity), selectedSellAsset.symbol)} ${selectedSellAsset.symbol} 
+                        ${sellDate} по ${sellPriceFormatted} ${sale.sell_currency}
+                    </div>
+                `;
+            } else {
+                salesDetails = `
+                    <div style="font-size: 10px; color: var(--text-tertiary); margin-top: 4px;">
+                        📊 Всего продаж: ${actualSales.length}
+                    </div>
+                `;
             }
+            
+            soldPartHtml = `
+                <div style="margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border-color); font-size: 11px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-tertiary);">📊 Продано ранее:</span>
+                        <span style="font-weight: 500;">${totalSoldQuantityFormatted} ${selectedSellAsset.symbol}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-tertiary);">💰 Выручено:</span>
+                        <span>${totalSellTotalFormatted} ${selectedSellPriceCurrency.code}</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-tertiary);">📈 Прибыль:</span>
+                        <span style="color: ${totalProfitColor}; font-weight: 500;">
+                            ${totalProfitSign}${totalProfitFormatted} ${selectedSellPriceCurrency.code} (${totalProfitSign}${totalProfitPercent.toFixed(1)}%)
+                        </span>
+                    </div>
+                    ${salesDetails}
+                </div>
+            `;
+        }
+        
+        // Сохраняем покупку для доступа
+        window.sellPurchaseItems.push({
+            id: purchaseId,
+            trade_id: purchase.trade_id,
+            platform_id: purchase.platform_id,
+            platform_name: purchase.platform_name,
+            quantity: quantity,
+            original_quantity: originalQuantity,
+            sold_quantity: soldQuantity,
+            price: purchasePrice,
+            price_currency: purchase.price_currency,
+            totalCost: remainingCost,
+            has_partial_sale: hasPartialSale,
+            actual_sales: actualSales
+        });
+        
+        html += `
+            <div class="sell-purchase-item" data-purchase-id="${purchaseId}" data-trade-id="${purchase.trade_id}" data-platform-id="${purchase.platform_id}" data-platform-name="${purchase.platform_name}" data-quantity="${quantity}" data-price="${purchasePrice}" data-currency="${purchase.price_currency}" data-total-cost="${remainingCost}"
+                style="background: var(--bg-secondary); border-radius: 12px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <div>
+                        <div style="font-weight: 500;">${formatDate(purchase.operation_date)} 
+                            <span style="font-size: 12px; color: var(--text-tertiary);">
+                                <i class="fas fa-building"></i> ${purchase.platform_name}
+                            </span>
+                        </div>
+                        <div style="font-size: 13px; margin-top: 6px;">
+                            ${quantityFormatted} ${selectedSellAsset.symbol} · по ${purchasePriceFormatted} ${purchase.price_currency}
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-tertiary);">
+                            ${remainingCostFormatted} ${purchase.price_currency} ${hasPartialSale ? `<span>(было куплено: ${originalQuantityFormatted} ${selectedSellAsset.symbol} за ${totalCostFormatted} ${purchase.price_currency})</span>` : ''}
+                        </div>
+                        ${soldPartHtml}
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-weight: 500;">${expectedRevenueFormatted} ${selectedSellPriceCurrency.code}</div>
+                        <div style="color: ${profitColor}; font-weight: 500;">
+                            ${profitSign}${formatAmount(profitPurchase, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}
+                            (${profitSign}${profitPercentPurchase.toFixed(1)}%)
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Ползунок процента продажи (только от остатка!) -->
+                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 12px; color: var(--text-secondary);">
+                            <i class="fas fa-percent"></i> Продать от остатка:
+                        </span>
+                        <span style="font-size: 13px; font-weight: 600;" id="percent-value-${purchaseId}">0%</span>
+                    </div>
+                    <input type="range" 
+                        id="slider-${purchaseId}"
+                        class="sell-percent-slider"
+                        data-purchase-id="${purchaseId}"
+                        data-max-quantity="${quantity}"
+                        data-price="${purchasePrice}"
+                        data-currency="${purchase.price_currency}"
+                        data-symbol="${selectedSellAsset.symbol}"
+                        data-total-cost="${remainingCost}"
+                        data-expected-revenue="${expectedRevenue}"
+                        min="0" 
+                        max="100" 
+                        value="0" 
+                        step="1"
+                        style="width: 100%; height: 6px; -webkit-appearance: none; background: linear-gradient(to right, #ff9f4a 0%, #ff9f4a 0%, #e0e6ed 0%, #e0e6ed 100%); border-radius: 3px; outline: none; cursor: pointer;">
+                    <div style="display: flex; justify-content: space-between; margin-top: 6px;">
+                        <span style="font-size: 10px; color: var(--text-tertiary);">0%</span>
+                        <span style="font-size: 10px; color: var(--text-tertiary);" id="quantity-display-${purchaseId}">0 / ${quantityFormatted} ${selectedSellAsset.symbol}</span>
+                        <span style="font-size: 10px; color: var(--text-tertiary);">100%</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+}
             
             html += `
                     </div>
@@ -7669,7 +7957,7 @@ async function loadSellData() {
                 
                 <!-- БЛОК 2: ТЕКУЩИЕ ОСТАТКИ ПО ПЛОЩАДКАМ (кликабельные - выбор площадки списания) -->
                 <div style="margin-bottom: 20px;">
-                    <h4 style="margin-bottom: 12px; font-size: 14px;"><i class="fas fa-building"></i> Остатки по площадкам</h4>
+                    <h4 style="margin-bottom: 12px; font-size: 14px;"><i class="fas fa-building"></i> С какой площадки продать:</h4>
                     <div style="max-height: 250px; overflow-y: auto;">
             `;
             
@@ -7693,9 +7981,6 @@ async function loadSellData() {
                                 <div style="font-size: 13px; margin-top: 4px;">
                                     ${quantityFormatted} ${selectedSellAsset.symbol}
                                 </div>
-                                <div style="font-size: 11px; color: #6b7a8f; margin-top: 2px;">
-                                    средняя цена: ${formatAmount(balance.average_buy_price, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}
-                                </div>
                             </div>
                             <div style="text-align: right;">
                                 <div style="font-size: 13px; font-weight: 500;">
@@ -7710,79 +7995,49 @@ async function loadSellData() {
             html += `
                     </div>
                 </div>
-                
-                <!-- БЛОК 3: РУЧНОЙ ВВОД КОЛИЧЕСТВА -->
-                <div style="margin-top: 15px; padding: 12px; background: var(--bg-tertiary); border-radius: 12px;">
-                    <div style="display: flex; gap: 12px; align-items: center;">
-                        <div class="form-group" style="flex: 1; margin-bottom: 0;">
-                            <label style="font-size: 12px;"><i class="fas fa-pen-alt"></i> Количество для продажи</label>
-                            <div class="currency-input-group">
-                                <input type="text" class="form-input" id="manualSellQuantity" placeholder="0" style="text-align: right;">
-                                <span class="currency-select-btn" style="background: var(--bg-secondary); cursor: default;">
-                                    ${selectedSellAsset.symbol}
-                                </span>
-                            </div>
-                        </div>
-                        <button type="button" id="sellMaxQuantityBtn" class="btn btn-secondary" style="padding: 10px 16px; display:none;">
-                            <i class="fas fa-arrow-up"></i> Макс
-                        </button>
-                    </div>
-                </div>
             `;
             
             lotsList.innerHTML = html;
             
-            // Добавляем обработчики для ручного ввода
-            const manualInput = document.getElementById('manualSellQuantity');
-            const maxBtn = document.getElementById('sellMaxQuantityBtn');
-            
-            if (manualInput) {
-                manualInput.addEventListener('input', function() { 
-                    formatInput(this);
-                    updateManualSellQuantity(); // Автоматический пересчет
-                });
-            }
-            
-            if (maxBtn) {
-                maxBtn.addEventListener('click', function() {
-                    if (manualInput) {
-                        manualInput.value = formatAmount(totalQuantity, selectedSellAsset.symbol);
-                        formatInput(manualInput);
-                        updateManualSellQuantity();
+            // Добавляем обработчики для ползунков
+            if (window.sellPurchaseItems) {
+                window.sellPurchaseItems.forEach(item => {
+                    const slider = document.getElementById(`slider-${item.id}`);
+                    if (slider) {
+                        slider.addEventListener('input', function(e) {
+                            updateSliderStyle(this);
+                            updateSellSummaryFromSliders(price);
+                        });
                     }
                 });
             }
             
-            // Добавляем обработчики для кнопок "Выбрать всё" и "Сбросить"
+            // Добавляем обработчики для кнопок "Выбрать всё" и "Сбросить все"
             const selectAllBtn = document.getElementById('sellSelectAllBtn');
             const clearSelectionBtn = document.getElementById('sellClearSelectionBtn');
             
             if (selectAllBtn) {
                 selectAllBtn.addEventListener('click', function() {
-                    document.querySelectorAll('.sell-purchase-item').forEach(item => {
-                        const checkbox = item.querySelector('input[type="checkbox"]');
-                        if (checkbox && !checkbox.checked) {
-                            checkbox.click();
-                        }
+                    document.querySelectorAll('.sell-percent-slider').forEach(slider => {
+                        slider.value = 100;
+                        updateSliderStyle(slider);
                     });
+                    updateSellSummaryFromSliders(price);
                 });
             }
             
             if (clearSelectionBtn) {
                 clearSelectionBtn.addEventListener('click', function() {
-                    document.querySelectorAll('.sell-purchase-item').forEach(item => {
-                        const checkbox = item.querySelector('input[type="checkbox"]');
-                        if (checkbox && checkbox.checked) {
-                            checkbox.click();
-                        }
+                    document.querySelectorAll('.sell-percent-slider').forEach(slider => {
+                        slider.value = 0;
+                        updateSliderStyle(slider);
                     });
-                    if (manualInput) manualInput.value = '';
-                    updateManualSellQuantity();
+                    updateSellSummaryFromSliders(price);
                 });
             }
             
-            // Обновляем сводку
-            updateSellSummaryFromSelection(price);
+            // Инициализируем сводку
+            updateSellSummaryFromSliders(price);
             
         } else {
             lotsList.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">' + (result.message || 'Ошибка загрузки данных') + '</div>';
@@ -7791,6 +8046,236 @@ async function loadSellData() {
         console.error('Error loading sell data:', error);
         lotsList.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">Ошибка загрузки: ' + error.message + '</div>';
     }
+}
+
+// Функция обновления стиля ползунка (градиент) и отображения количества/дохода
+function updateSliderStyle(slider) {
+    const val = (slider.value - slider.min) / (slider.max - slider.min);
+    const percent = val * 100;
+    slider.style.background = `linear-gradient(to right, #ff9f4a 0%, #ff9f4a ${percent}%, #e0e6ed ${percent}%, #e0e6ed 100%)`;
+    
+    const purchaseId = slider.dataset.purchaseId;
+    const percentValue = document.getElementById(`percent-value-${purchaseId}`);
+    if (percentValue) {
+        percentValue.textContent = `${slider.value}%`;
+    }
+    
+    // Получаем данные
+    const maxQuantity = parseFloat(slider.dataset.maxQuantity);
+    const selectedQuantity = maxQuantity * (slider.value / 100);
+    const symbol = slider.dataset.symbol || '';
+    const totalCost = parseFloat(slider.dataset.totalCost);
+    const expectedRevenueFull = parseFloat(slider.dataset.expectedRevenue);
+    const priceCurrency = slider.dataset.currency || selectedSellPriceCurrency?.code || 'USD';
+    
+    const quantityDisplay = document.getElementById(`quantity-display-${purchaseId}`);
+    if (quantityDisplay) {
+        // Форматируем количество с правильным числом знаков
+        const formattedSelected = formatAmount(selectedQuantity, symbol);
+        const formattedMax = formatAmount(maxQuantity, symbol);
+        
+        let displayText = `${formattedSelected} / ${formattedMax} ${symbol}`;
+        
+        // Добавляем информацию о доходе только если выбран не 0%
+        if (slider.value > 0 && totalCost && expectedRevenueFull && !isNaN(totalCost) && !isNaN(expectedRevenueFull)) {
+            const currentPercent = parseFloat(slider.value) / 100;
+            const currentRevenue = expectedRevenueFull * currentPercent;
+            const currentCost = totalCost * currentPercent;
+            const currentProfit = currentRevenue - currentCost;
+            const currentProfitPercent = currentCost > 0 ? (currentProfit / currentCost) * 100 : 0;
+            const profitSign = currentProfit >= 0 ? '+' : '';
+            const profitColor = currentProfit >= 0 ? '#00a86b' : '#e53e3e';
+            
+            // Форматируем сумму прибыли
+            let formattedProfit = formatAmount(Math.abs(currentProfit), priceCurrency);
+            if (priceCurrency === 'BTC' || priceCurrency === 'ETH') {
+                formattedProfit = formatAmount(Math.abs(currentProfit), priceCurrency);
+            } else {
+                formattedProfit = formatAmount(Math.abs(currentProfit), priceCurrency);
+            }
+            
+            displayText += ` <span style="color: ${profitColor};">· ${profitSign}${formattedProfit} ${priceCurrency} (${profitSign}${currentProfitPercent.toFixed(1)}%)</span>`;
+        }
+        
+        quantityDisplay.innerHTML = displayText;
+    }
+}
+
+// Функция обновления сводки на основе ползунков
+function updateSellSummaryFromSliders(price) {
+    let totalQuantity = 0;
+    let totalCost = 0;
+    let selectedPlatformsMap = new Map(); // platform_id -> { quantity, avg_price }
+    
+    // Собираем данные со всех ползунков
+    document.querySelectorAll('.sell-percent-slider').forEach(slider => {
+        const percent = parseFloat(slider.value) || 0;
+        if (percent > 0) {
+            const maxQuantity = parseFloat(slider.dataset.maxQuantity);
+            const quantity = maxQuantity * (percent / 100);
+            const purchasePrice = parseFloat(slider.dataset.price);
+            const platformId = parseInt(slider.closest('.sell-purchase-item').dataset.platformId);
+            
+            totalQuantity += quantity;
+            totalCost += quantity * purchasePrice;
+            
+            // Группируем по площадкам для последующей продажи
+            if (selectedPlatformsMap.has(platformId)) {
+                const existing = selectedPlatformsMap.get(platformId);
+                existing.quantity += quantity;
+                // Средневзвешенная цена
+                existing.totalCost += quantity * purchasePrice;
+            } else {
+                selectedPlatformsMap.set(platformId, {
+                    platform_id: platformId,
+                    quantity: quantity,
+                    totalCost: quantity * purchasePrice,
+                    avg_price: purchasePrice
+                });
+            }
+        }
+    });
+    
+    // Пересчитываем среднюю цену для каждой площадки
+    const selectedPlatforms = [];
+    for (let [platformId, data] of selectedPlatformsMap.entries()) {
+        selectedPlatforms.push({
+            platform_id: platformId,
+            quantity: data.quantity,
+            avg_price: data.totalCost / data.quantity
+        });
+    }
+    
+    // Сохраняем выбранные площадки для отправки
+    window.selectedSellPlatforms = selectedPlatforms;
+    
+    const detailsDiv = document.getElementById('sellTransactionDetails');
+    
+    if (totalQuantity === 0) {
+        if (detailsDiv) detailsDiv.style.display = 'none';
+        return;
+    }
+    
+    if (detailsDiv) detailsDiv.style.display = 'block';
+    
+    const avgPrice = totalQuantity > 0 ? totalCost / totalQuantity : 0;
+    const totalValue = totalQuantity * price;
+    const profit = totalValue - totalCost;
+    const profitPercent = totalCost > 0 ? (profit / totalCost) * 100 : 0;
+    
+    const commission = parseFloat(document.getElementById('sellCommission').value.replace(/\s/g, '')) || 0;
+    const netValue = totalValue - commission;
+    const netProfit = netValue - totalCost;
+    const netProfitPercent = totalCost > 0 ? (netProfit / totalCost) * 100 : 0;
+    
+    const finalQuantity = document.getElementById('sellFinalQuantity');
+    const finalPrice = document.getElementById('sellFinalPrice');
+    const finalTotal = document.getElementById('sellFinalTotal');
+    const finalProfit = document.getElementById('sellFinalProfit');
+    const finalPlatform = document.getElementById('sellFinalPlatform');
+    const finalAvgPrice = document.getElementById('sellFinalAvgPrice');
+    
+    // Определяем основную площадку (с максимальным количеством)
+    let mainPlatformName = '';
+    let maxQty = 0;
+    selectedPlatforms.forEach(p => {
+        if (p.quantity > maxQty) {
+            maxQty = p.quantity;
+            const purchaseItem = document.querySelector(`.sell-purchase-item[data-platform-id="${p.platform_id}"]`);
+            if (purchaseItem) {
+                mainPlatformName = purchaseItem.dataset.platformName;
+            }
+        }
+    });
+    
+    if (finalAvgPrice) finalAvgPrice.textContent = `${formatAmount(avgPrice, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}`;
+    if (finalQuantity) finalQuantity.textContent = `${formatAmount(totalQuantity, selectedSellAsset.symbol)} ${selectedSellAsset.symbol}`;
+    if (finalPrice) finalPrice.textContent = `${formatAmount(price, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}`;
+    if (finalTotal) finalTotal.textContent = `${formatAmount(totalValue, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}`;
+    if (finalProfit) {
+        finalProfit.innerHTML = `${netProfit >= 0 ? '+' : ''}${formatAmount(netProfit, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code} (${netProfitPercent.toFixed(1)}%)`;
+        finalProfit.style.color = netProfit >= 0 ? '#00a86b' : '#e53e3e';
+    }
+    if (finalPlatform) {
+        // Если выбрана площадка в блоке "С какой площадки продать", используем её
+        if (selectedSellPlatformId && selectedSellPlatformName) {
+            finalPlatform.textContent = selectedSellPlatformName;
+        } else {
+            finalPlatform.textContent = mainPlatformName || 'Не выбрана';
+        }
+    }
+    
+    // Обновляем скрытое поле площадки (если нужно)
+    if (selectedPlatforms.length > 0) {
+        const platformInput = document.getElementById('sellPlatformId');
+        if (platformInput) platformInput.value = selectedPlatforms[0].platform_id;
+    }
+
+    // Проверяем, достаточно ли актива на выбранной площадке
+    if (selectedSellPlatformId) {
+        const selectedBalance = sellPlatformBalances.find(b => b.platform_id == selectedSellPlatformId);
+        if (selectedBalance) {
+            const isInsufficient = totalQuantity > selectedBalance.quantity;
+            window.selectedPlatformSufficient = !isInsufficient;
+            
+            // Обновляем визуальное состояние выбранной площадки
+            const selectedItem = document.querySelector(`.sell-platform-item[data-platform-id="${selectedSellPlatformId}"]`);
+            if (selectedItem) {
+                if (isInsufficient) {
+                    selectedItem.style.borderColor = '#e53e3e';
+                    selectedItem.style.background = 'rgba(229, 62, 62, 0.1)';
+                } else {
+                    selectedItem.style.borderColor = '#ff9f4a';
+                    selectedItem.style.background = 'rgba(255, 159, 74, 0.1)';
+                }
+            }
+            
+            // Обновляем текст в поле "Площадка списания"
+            const finalPlatform = document.getElementById('sellFinalPlatform');
+            if (finalPlatform) {
+                if (isInsufficient) {
+                    finalPlatform.innerHTML = `${selectedSellPlatformName} <span style="color: #e53e3e;">(недостаточно средств!)</span>`;
+                } else {
+                    finalPlatform.textContent = selectedSellPlatformName;
+                }
+            }
+        }
+    }
+}
+
+// Функция для расчета выбранного количества (для confirmSell)
+function getSelectedLotsFromSliders() {
+    const selectedPlatforms = [];
+    
+    document.querySelectorAll('.sell-percent-slider').forEach(slider => {
+        const percent = parseFloat(slider.value) || 0;
+        if (percent > 0) {
+            const maxQuantity = parseFloat(slider.dataset.maxQuantity);
+            const quantity = maxQuantity * (percent / 100);
+            const purchasePrice = parseFloat(slider.dataset.price);
+            const platformId = parseInt(slider.closest('.sell-purchase-item').dataset.platformId);
+            
+            // Проверяем, не добавляли ли уже эту площадку
+            const existing = selectedPlatforms.find(p => p.platform_id === platformId);
+            if (existing) {
+                existing.quantity += quantity;
+                existing.totalCost += quantity * purchasePrice;
+            } else {
+                selectedPlatforms.push({
+                    platform_id: platformId,
+                    quantity: quantity,
+                    totalCost: quantity * purchasePrice
+                });
+            }
+        }
+    });
+    
+    // Рассчитываем среднюю цену для каждой площадки
+    return selectedPlatforms.map(p => ({
+        platform_id: p.platform_id,
+        quantity: p.quantity,
+        avg_price: p.totalCost / p.quantity
+    }));
 }
 
 // Хранилище выбранных покупок (Map: purchaseId -> { quantity, price, currency })
@@ -7832,11 +8317,29 @@ function togglePurchaseSelection(purchaseId, quantity, price, currency, platform
     updateSellSummaryFromSelection(priceInput);
 }
 
-// Выбор площадки из списка остатков (только выбор, количество не подставляется)
+// Выбор площадки из списка остатков
 function selectSellPlatformQuick(platformId, platformName, quantity, avgPrice) {
     selectedSellPlatformId = platformId;
     selectedSellPlatformName = platformName;
     selectedSellPlatformAvgPrice = avgPrice;
+    
+    // Получаем текущее выбранное количество из ползунков
+    let totalSelectedQuantity = 0;
+    document.querySelectorAll('.sell-percent-slider').forEach(slider => {
+        const percent = parseFloat(slider.value) || 0;
+        if (percent > 0) {
+            const maxQuantity = parseFloat(slider.dataset.maxQuantity);
+            totalSelectedQuantity += maxQuantity * (percent / 100);
+        }
+    });
+    
+    // Если количество не выбрано, берем 0
+    if (totalSelectedQuantity === 0) {
+        totalSelectedQuantity = window.manualSelectedQuantity || 0;
+    }
+    
+    // Проверяем, достаточно ли актива на площадке
+    const isInsufficient = totalSelectedQuantity > quantity;
     
     // Обновляем визуальное состояние
     document.querySelectorAll('.sell-platform-item').forEach(item => {
@@ -7845,13 +8348,82 @@ function selectSellPlatformQuick(platformId, platformName, quantity, avgPrice) {
         item.style.background = isSelected ? 'rgba(255, 159, 74, 0.1)' : 'var(--bg-secondary)';
     });
     
+    // Подсвечиваем выбранную площадку красным, если недостаточно средств
+    const selectedItem = document.querySelector(`.sell-platform-item[data-platform-id="${platformId}"]`);
+    if (selectedItem) {
+        if (isInsufficient) {
+            selectedItem.style.borderColor = '#e53e3e';
+            selectedItem.style.background = 'rgba(229, 62, 62, 0.1)';
+        } else {
+            selectedItem.style.borderColor = '#ff9f4a';
+            selectedItem.style.background = 'rgba(255, 159, 74, 0.1)';
+        }
+    }
+    
     // Обновляем скрытое поле площадки
     const platformInput = document.getElementById('sellPlatformId');
     if (platformInput) platformInput.value = platformId;
     
-    // Обновляем сводку
-    const price = parseFloat(document.getElementById('sellPrice').value.replace(/\s/g, '')) || 0;
-    updateSellSummaryFromSelection(price);
+    // Обновляем поле "Площадка списания" в блоке деталей
+    const finalPlatform = document.getElementById('sellFinalPlatform');
+    if (finalPlatform) {
+        if (isInsufficient) {
+            finalPlatform.innerHTML = `${platformName} <span style="color: #e53e3e;">(недостаточно средств!)</span>`;
+        } else {
+            finalPlatform.textContent = platformName;
+        }
+    }
+    
+    // Показываем блок деталей, если он скрыт
+    const detailsDiv = document.getElementById('sellTransactionDetails');
+    if (detailsDiv && totalSelectedQuantity > 0) {
+        detailsDiv.style.display = 'block';
+    }
+    
+    // Сохраняем информацию о достаточности средств
+    window.selectedPlatformSufficient = !isInsufficient;
+}
+
+// Новая функция для обновления сводки на основе выбранной площадки
+function updateSellSummaryFromSelectedPlatform(platformId, platformName, quantity, avgPrice, price) {
+    const detailsDiv = document.getElementById('sellTransactionDetails');
+    
+    if (!platformId || quantity === 0) {
+        if (detailsDiv) detailsDiv.style.display = 'none';
+        return;
+    }
+    
+    if (detailsDiv) detailsDiv.style.display = 'block';
+    
+    const totalQuantity = quantity;
+    const totalCost = totalQuantity * avgPrice;
+    const totalValue = totalQuantity * price;
+    const profit = totalValue - totalCost;
+    const profitPercent = totalCost > 0 ? (profit / totalCost) * 100 : 0;
+    
+    const commission = parseFloat(document.getElementById('sellCommission').value.replace(/\s/g, '')) || 0;
+    const netValue = totalValue - commission;
+    const netProfit = netValue - totalCost;
+    const netProfitPercent = totalCost > 0 ? (netProfit / totalCost) * 100 : 0;
+    
+    const finalQuantity = document.getElementById('sellFinalQuantity');
+    const finalPrice = document.getElementById('sellFinalPrice');
+    const finalTotal = document.getElementById('sellFinalTotal');
+    const finalProfit = document.getElementById('sellFinalProfit');
+    const finalPlatform = document.getElementById('sellFinalPlatform');
+    const finalAvgPrice = document.getElementById('sellFinalAvgPrice');
+    
+    if (finalAvgPrice) finalAvgPrice.textContent = `${formatAmount(avgPrice, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}`;
+    if (finalQuantity) finalQuantity.textContent = `${formatAmount(totalQuantity, selectedSellAsset.symbol)} ${selectedSellAsset.symbol}`;
+    if (finalPrice) finalPrice.textContent = `${formatAmount(price, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}`;
+    if (finalTotal) finalTotal.textContent = `${formatAmount(totalValue, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code}`;
+    if (finalProfit) {
+        finalProfit.innerHTML = `${netProfit >= 0 ? '+' : ''}${formatAmount(netProfit, selectedSellPriceCurrency.code)} ${selectedSellPriceCurrency.code} (${netProfitPercent.toFixed(1)}%)`;
+        finalProfit.style.color = netProfit >= 0 ? '#00a86b' : '#e53e3e';
+    }
+    if (finalPlatform) {
+        finalPlatform.textContent = platformName;
+    }
 }
 
 // Обновление ручного количества (автоматический пересчет)
@@ -8125,10 +8697,6 @@ async function confirmSell() {
     const operationDate = document.getElementById('sellDate').value;
     const notes = document.getElementById('sellNotes').value;
     
-    console.log('Данные для продажи:', {
-        assetId, price, priceCurrency, commission, commissionCurrency, operationDate, notes
-    });
-    
     if (!assetId) {
         showNotification('error', 'Ошибка', 'Выберите актив');
         return;
@@ -8144,65 +8712,28 @@ async function confirmSell() {
         return;
     }
     
-    let totalQuantity = 0;
-    let totalCost = 0;
-    let selectedPlatforms = [];
-    
-    // Проверяем, есть ли ручной ввод
-    const manualQuantity = window.manualSelectedQuantity || 0;
-    
-    console.log('sellPlatformBalances:', sellPlatformBalances);
-    console.log('selectedPurchases:', selectedPurchases);
-    console.log('manualQuantity:', manualQuantity);
-    
-    if (manualQuantity > 0) {
-        // Режим ручного ввода - нужно продать с нескольких площадок по FIFO
-        totalQuantity = manualQuantity;
-        
-        // Находим балансы для списания
-        let remainingToSell = manualQuantity;
-        for (const balance of sellPlatformBalances) {
-            if (remainingToSell <= 0) break;
-            
-            const sellFromThis = Math.min(balance.quantity, remainingToSell);
-            if (sellFromThis > 0) {
-                selectedPlatforms.push({
-                    platform_id: balance.platform_id,
-                    quantity: sellFromThis,
-                    avg_price: balance.average_buy_price
-                });
-                totalCost += sellFromThis * balance.average_buy_price;
-                remainingToSell -= sellFromThis;
-            }
-        }
-        
-        if (remainingToSell > 0) {
-            showNotification('error', 'Ошибка', `Недостаточно актива. Доступно: ${formatAmount(totalQuantity - remainingToSell, selectedSellAsset.symbol)} ${selectedSellAsset.symbol}`);
-            return;
-        }
-    } else if (selectedPurchases.size > 0) {
-        // Режим выбора из истории покупок
-        for (let [purchaseId, purchase] of selectedPurchases.entries()) {
-            totalQuantity += purchase.quantity;
-            totalCost += purchase.quantity * purchase.price;
-            
-            // Находим площадку для этой покупки
-            const purchaseData = sellPurchaseHistory.find(p => `purchase_${p.trade_id}` === purchaseId);
-            if (purchaseData) {
-                selectedPlatforms.push({
-                    platform_id: purchaseData.platform_id,
-                    quantity: purchase.quantity,
-                    avg_price: purchase.price
-                });
-            }
-        }
-    } else {
-        showNotification('error', 'Ошибка', 'Выберите лоты для продажи или укажите количество вручную');
+    // Проверка: выбрана ли площадка
+    if (!selectedSellPlatformId) {
+        showNotification('error', 'Ошибка', 'Выберите площадку для продажи в разделе "С какой площадки продать"');
         return;
     }
     
+    // Проверка: достаточно ли средств на площадке
+    if (window.selectedPlatformSufficient === false) {
+        showNotification('error', 'Ошибка', 'На выбранной площадке недостаточно актива для продажи');
+        return;
+    }
+    
+    // Получаем выбранные лоты из ползунков
+    const selectedPlatforms = getSelectedLotsFromSliders();
+    
+    let totalQuantity = 0;
+    selectedPlatforms.forEach(p => {
+        totalQuantity += p.quantity;
+    });
+    
     if (totalQuantity <= 0) {
-        showNotification('error', 'Ошибка', 'Выберите количество для продажи');
+        showNotification('error', 'Ошибка', 'Выберите количество для продажи (передвиньте ползунки)');
         return;
     }
     
@@ -8411,4 +8942,198 @@ function openTransferModal() {
         // Очищаем данные баланса
         currentPlatformBalanceData = null;
     }
+}
+
+// Глобальные переменные для текущего актива
+let currentAssetSymbol = '';
+let currentAssetId = null;
+
+// Функция показа деталей актива (вызывается при клике на строку таблицы)
+async function showAssetDetails(symbol, assetId) {
+    currentAssetSymbol = symbol;
+    currentAssetId = assetId;
+    
+    const modal = document.getElementById('assetDetailsModal');
+    const titleSpan = document.getElementById('assetDetailsSymbol');
+    const body = document.getElementById('assetDetailsBody');
+    
+    titleSpan.textContent = symbol;
+    modal.classList.add('active');
+    body.innerHTML = '<div style="text-align: center; padding: 30px;"><i class="fas fa-spinner fa-spin"></i> Загрузка распределения...</div>';
+    
+    // Загружаем распределение по площадкам и сетям
+    const formData = new FormData();
+    formData.append('action', 'get_asset_distribution');
+    formData.append('asset_id', assetId);
+    formData.append('symbol', symbol);
+    
+    try {
+        const response = await fetch(API_URL_PHP, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            displayAssetDistribution(result, symbol);
+        } else {
+            body.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">Ошибка загрузки: ' + (result.message || 'Неизвестная ошибка') + '</div>';
+        }
+    } catch (error) {
+        body.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">Ошибка загрузки</div>';
+    }
+}
+
+// Отображение распределения актива
+function displayAssetDistribution(data, symbol) {
+    const body = document.getElementById('assetDetailsBody');
+    const total = data.total_quantity;
+    const platforms = data.platforms;
+    const networks = data.networks;
+    
+    let html = `
+        <div style="margin-bottom: 20px; padding: 12px; background: var(--bg-tertiary); border-radius: 12px;">
+            <div style="display: flex; justify-content: space-between;">
+                <span>Всего ${symbol}:</span>
+                <span style="font-weight: 700; font-size: 18px;">${formatAmount(total, symbol)} ${symbol}</span>
+            </div>
+        </div>
+        
+        <h4 style="margin-bottom: 12px;"><i class="fas fa-building"></i> Распределение по площадкам</h4>
+        <div style="margin-bottom: 24px;">
+    `;
+    
+    if (platforms.length === 0) {
+        html += '<div style="text-align: center; padding: 20px; color: #6b7a8f;">Нет данных по площадкам</div>';
+    } else {
+        platforms.forEach(platform => {
+            const percent = (platform.quantity / total * 100).toFixed(1);
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color);">
+                    <div>
+                        <span style="font-weight: 500;">${platform.platform_name}</span>
+                        ${platform.network ? `<span style="font-size: 11px; color: #6b7a8f; margin-left: 8px;"><i class="fas fa-network-wired"></i> ${platform.network}</span>` : ''}
+                    </div>
+                    <div style="text-align: right;">
+                        <div>${formatAmount(platform.quantity, symbol)} ${symbol}</div>
+                        <div style="font-size: 12px; color: #6b7a8f;">${percent}%</div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+    
+    html += `
+        </div>
+        
+        <h4 style="margin-bottom: 12px;"><i class="fas fa-network-wired"></i> Распределение по сетям (крипто)</h4>
+        <div>
+    `;
+    
+    if (networks.length === 0) {
+        html += '<div style="text-align: center; padding: 20px; color: #6b7a8f;">Нет данных по сетям</div>';
+    } else {
+        networks.forEach(network => {
+            const percent = (network.quantity / total * 100).toFixed(1);
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border-color);">
+                    <div>
+                        <i class="fas fa-network-wired" style="color: #ff9f4a; width: 20px;"></i>
+                        <span>${network.network}</span>
+                    </div>
+                    <div style="text-align: right;">
+                        <div>${formatAmount(network.quantity, symbol)} ${symbol}</div>
+                        <div style="font-size: 12px; color: #6b7a8f;">${percent}%</div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+    
+    html += `
+        </div>
+    `;
+    
+    body.innerHTML = html;
+}
+
+// Показать историю покупок
+async function showAssetPurchaseHistory() {
+    if (!currentAssetId) {
+        showNotification('error', 'Ошибка', 'ID актива не найден');
+        return;
+    }
+    
+    // Закрываем модальное окно деталей
+    closeAssetDetailsModal();
+    
+    // Открываем модальное окно истории
+    const modal = document.getElementById('purchaseHistoryModal');
+    const symbolSpan = document.getElementById('purchaseHistorySymbol');
+    const body = document.getElementById('purchaseHistoryBody');
+    
+    symbolSpan.textContent = currentAssetSymbol;
+    modal.classList.add('active');
+    body.innerHTML = '<div style="text-align: center; padding: 30px;"><i class="fas fa-spinner fa-spin"></i> Загрузка истории...</div>';
+    
+    const formData = new FormData();
+    formData.append('action', 'get_asset_purchase_history');
+    formData.append('asset_id', currentAssetId);
+    
+    try {
+        const response = await fetch(API_URL_PHP, {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success && result.history) {
+            displayPurchaseHistory(result.history, currentAssetSymbol);
+        } else {
+            body.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">Ошибка загрузки истории</div>';
+        }
+    } catch (error) {
+        body.innerHTML = '<div style="text-align: center; padding: 30px; color: #e53e3e;">Ошибка загрузки</div>';
+    }
+}
+
+// Отображение истории покупок
+function displayPurchaseHistory(history, symbol) {
+    const body = document.getElementById('purchaseHistoryBody');
+    
+    if (history.length === 0) {
+        body.innerHTML = '<div style="text-align: center; padding: 30px; color: #6b7a8f;">Нет истории покупок</div>';
+        return;
+    }
+    
+    let html = '';
+    history.forEach(item => {
+        const date = new Date(item.operation_date).toLocaleDateString('ru-RU');
+        const quantity = formatAmount(item.quantity, symbol);
+        const price = formatAmount(item.price, item.price_currency);
+        const total = formatAmount(item.quantity * item.price, item.price_currency);
+        
+        html += `
+            <div style="padding: 12px; border-bottom: 1px solid var(--border-color);">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                    <span style="font-weight: 500;">${date}</span>
+                    <span style="color: #00a86b;">${quantity} ${symbol}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 13px; color: #6b7a8f;">
+                    <span>${item.platform_name}</span>
+                    <span>по ${price} ${item.price_currency} (${total} ${item.price_currency})</span>
+                </div>
+            </div>
+        `;
+    });
+    
+    body.innerHTML = html;
+}
+
+function closeAssetDetailsModal() {
+    document.getElementById('assetDetailsModal').classList.remove('active');
+}
+
+function closePurchaseHistoryModal() {
+    document.getElementById('purchaseHistoryModal').classList.remove('active');
 }

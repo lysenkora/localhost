@@ -3,9 +3,9 @@
 -- https://www.phpmyadmin.net/
 --
 -- Хост: 127.0.0.1:3306
--- Время создания: Мар 28 2026 г., 22:47
+-- Время создания: Апр 04 2026 г., 10:39
 -- Версия сервера: 8.0.12
--- Версия PHP: 7.1.22
+-- Версия PHP: 7.2.10
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 SET AUTOCOMMIT = 0;
@@ -109,7 +109,8 @@ INSERT INTO `assets` (`id`, `symbol`, `name`, `type`, `sector`, `currency_code`,
 (38, 'COIN.US', 'Coinbase Global Inc', 'stock', 'Technology', 'USD', 1, '2026-03-26 18:42:35'),
 (50, 'ASTER', 'Aster', 'crypto', '', 'USD', 1, '2026-03-27 18:41:07'),
 (51, 'CRV', 'Curve DAO Token', 'crypto', '', 'USD', 1, '2026-03-27 18:46:07'),
-(52, 'PUMP', 'Pump.fun', 'crypto', '', 'USD', 1, '2026-03-27 18:49:19');
+(52, 'PUMP', 'Pump.fun', 'crypto', '', 'USD', 1, '2026-03-27 18:49:19'),
+(53, 'ES', 'Eclipse', 'crypto', NULL, 'ES', 1, '2026-03-31 11:34:22');
 
 -- --------------------------------------------------------
 
@@ -138,6 +139,7 @@ INSERT INTO `currencies` (`code`, `name`, `symbol`, `type`) VALUES
 ('BTC', 'Биткоин', '₿', 'crypto'),
 ('CELO', 'Celo', NULL, 'crypto'),
 ('CRV', 'Curve DAO Token', NULL, 'crypto'),
+('ES', 'Eclipse', '', 'crypto'),
 ('ETH', 'Ethereum', 'Ξ', 'crypto'),
 ('EUR', 'Евро', '€', 'fiat'),
 ('FIL', 'Filecoin', NULL, 'crypto'),
@@ -196,7 +198,8 @@ INSERT INTO `deposits` (`id`, `platform_id`, `amount`, `currency_code`, `deposit
 (22, 1, '111112.00000000', 'RUB', '2025-09-30', '', '2026-03-26 09:25:02'),
 (23, 1, '100009.00000000', 'RUB', '2026-02-16', '', '2026-03-27 17:56:27'),
 (24, 1, '98891.00000000', 'RUB', '2026-02-18', '', '2026-03-27 17:56:52'),
-(25, 8, '75.00000000', 'USDT', '2025-11-21', '', '2026-03-27 18:48:22');
+(25, 8, '75.00000000', 'USDT', '2025-11-21', '', '2026-03-27 18:48:22'),
+(26, 8, '40.00000000', 'ES', '2025-08-05', 'получил ретродроп от Eclipse', '2026-03-31 11:38:43');
 
 -- --------------------------------------------------------
 
@@ -252,6 +255,13 @@ CREATE TABLE `expenses` (
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+--
+-- Дамп данных таблицы `expenses`
+--
+
+INSERT INTO `expenses` (`id`, `amount`, `currency_code`, `category_id`, `description`, `expense_date`, `created_at`, `updated_at`) VALUES
+(1, '0.01', 'USD', 7, 'Расходы на ретродроп Eclipse', '2025-08-05', '2026-03-31 11:31:53', '2026-03-31 11:31:53');
+
 -- --------------------------------------------------------
 
 --
@@ -274,12 +284,7 @@ CREATE TABLE `expense_categories` (
 --
 
 INSERT INTO `expense_categories` (`id`, `name`, `name_ru`, `icon`, `color`, `is_active`, `sort_order`, `created_at`) VALUES
-(1, 'other', 'Другое', 'fas fa-ellipsis-h', '#95a5a6', 1, 999, '2026-03-28 18:42:30'),
-(2, 'food', 'Продукты', 'fas fa-utensils', '#00a86b', 1, 1, '2026-03-28 19:04:25'),
-(3, 'transport', 'Транспорт', 'fas fa-car', '#1a5cff', 1, 2, '2026-03-28 19:04:25'),
-(4, 'shopping', 'Покупки', 'fas fa-shopping-bag', '#ff9f4a', 1, 3, '2026-03-28 19:04:25'),
-(5, 'entertainment', 'Развлечения', 'fas fa-film', '#9b59b6', 1, 4, '2026-03-28 19:04:25'),
-(6, 'utilities', 'Коммунальные', 'fas fa-home', '#e74c3c', 1, 5, '2026-03-28 19:04:25');
+(7, 'retrodrop', 'Ретродроп', 'fas fa-gift', '#ff9f4a', 1, 1, '2026-03-31 11:22:28');
 
 -- --------------------------------------------------------
 
@@ -407,7 +412,7 @@ CREATE TABLE `portfolio` (
 
 INSERT INTO `portfolio` (`id`, `asset_id`, `platform_id`, `quantity`, `average_buy_price`, `currency_code`, `notes`, `created_at`, `updated_at`) VALUES
 (15, 1, 1, '201264.50783020', NULL, 'RUB', NULL, '2026-03-07 19:52:13', '2026-03-27 17:59:16'),
-(16, 6, 8, '207.89505322', '90.72821098', 'RUB', NULL, '2026-03-07 19:53:44', '2026-03-27 19:04:07'),
+(16, 6, 8, '207.89505300', '90.72821098', 'RUB', NULL, '2026-03-07 19:53:44', '2026-04-01 17:39:10'),
 (17, 17, 8, '58.31163000', '1.23680000', 'USDT', NULL, '2026-03-11 16:49:31', '2026-03-11 16:49:31'),
 (18, 18, 8, '537.12143800', '0.13690000', 'USDT', NULL, '2026-03-11 17:15:22', '2026-03-11 17:15:22'),
 (19, 19, 8, '61.41392000', '2.87103713', 'USDT', NULL, '2026-03-12 16:39:21', '2026-03-27 18:28:18'),
@@ -419,7 +424,7 @@ INSERT INTO `portfolio` (`id`, `asset_id`, `platform_id`, `quantity`, `average_b
 (25, 25, 8, '139.69809000', '0.52960000', 'USDT', NULL, '2026-03-15 17:01:26', '2026-03-15 17:01:26'),
 (26, 26, 8, '123.77680000', '0.19880000', 'USDT', NULL, '2026-03-15 17:02:23', '2026-03-15 17:02:23'),
 (27, 6, 14, '393.95890000', '90.72821098', 'USD', NULL, '2026-03-15 17:07:48', '2026-03-27 18:21:01'),
-(28, 5, 8, '0.30330603', '2291.33906594', 'USDT', NULL, '2026-03-22 04:03:09', '2026-03-27 19:04:07'),
+(28, 5, 8, '0.29712100', '2291.33906594', 'USDT', NULL, '2026-03-22 04:03:09', '2026-04-01 17:38:31'),
 (29, 27, 8, '2.41173880', '136.77530023', 'USDT', NULL, '2026-03-22 04:32:39', '2026-03-27 18:47:43'),
 (30, 29, 8, '89.63000000', '0.83800000', 'USDT', NULL, '2026-03-22 04:48:23', '2026-03-22 04:48:23'),
 (31, 30, 8, '400.95000000', '0.24821092', 'USDT', NULL, '2026-03-22 04:49:32', '2026-03-27 18:23:51'),
@@ -442,7 +447,8 @@ INSERT INTO `portfolio` (`id`, `asset_id`, `platform_id`, `quantity`, `average_b
 (73, 50, 8, '96.82000000', '1.28070000', 'USDT', NULL, '2026-03-27 18:41:47', '2026-03-27 18:41:47'),
 (74, 51, 8, '200.20000000', '0.41450000', 'USDT', NULL, '2026-03-27 18:46:36', '2026-03-27 18:46:36'),
 (76, 52, 8, '24333.50000000', '0.00262000', 'USDT', NULL, '2026-03-27 18:49:39', '2026-03-27 18:49:39'),
-(80, 5, 20, '0.02963000', NULL, 'USD', NULL, '2026-03-28 13:20:17', '2026-03-28 13:20:17');
+(80, 5, 20, '0.02963000', NULL, 'USD', NULL, '2026-03-28 13:20:17', '2026-03-28 13:20:17'),
+(81, 53, 8, '40.00000000', NULL, 'ES', NULL, '2026-03-31 11:38:43', '2026-03-31 11:38:43');
 
 -- --------------------------------------------------------
 
@@ -500,6 +506,22 @@ INSERT INTO `sectors` (`id`, `name`, `name_ru`, `type`, `is_active`, `created_at
 (9, 'Real Estate', 'Недвижимость', 'stock', 1, '2026-03-26 17:33:57'),
 (10, 'Materials', 'Материалы', 'stock', 1, '2026-03-26 17:33:57'),
 (11, 'Other', 'Другое', 'stock', 1, '2026-03-26 17:33:57');
+
+-- --------------------------------------------------------
+
+--
+-- Структура таблицы `sold_lots`
+--
+
+CREATE TABLE `sold_lots` (
+  `id` int(11) NOT NULL,
+  `sell_trade_id` int(11) NOT NULL COMMENT 'ID сделки продажи из trades',
+  `buy_trade_id` int(11) NOT NULL COMMENT 'ID сделки покупки из trades',
+  `quantity` decimal(20,8) NOT NULL COMMENT 'Количество, проданное из этого лота',
+  `buy_price` decimal(20,8) NOT NULL COMMENT 'Цена покупки этого лота на момент сделки',
+  `buy_price_currency` varchar(10) NOT NULL COMMENT 'Валюта цены покупки',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -729,7 +751,7 @@ CREATE TABLE `user_settings` (
 --
 
 INSERT INTO `user_settings` (`id`, `setting_key`, `setting_value`, `updated_at`) VALUES
-(1, 'theme', 'dark', '2026-03-27 18:33:05');
+(1, 'theme', 'dark', '2026-03-29 11:21:27');
 
 -- --------------------------------------------------------
 
@@ -888,6 +910,14 @@ ALTER TABLE `sectors`
   ADD UNIQUE KEY `unique_name` (`name`);
 
 --
+-- Индексы таблицы `sold_lots`
+--
+ALTER TABLE `sold_lots`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `sell_trade_id` (`sell_trade_id`),
+  ADD KEY `buy_trade_id` (`buy_trade_id`);
+
+--
 -- Индексы таблицы `stock_sectors_en`
 --
 ALTER TABLE `stock_sectors_en`
@@ -946,13 +976,13 @@ ALTER TABLE `action_plan`
 -- AUTO_INCREMENT для таблицы `assets`
 --
 ALTER TABLE `assets`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=53;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=54;
 
 --
 -- AUTO_INCREMENT для таблицы `deposits`
 --
 ALTER TABLE `deposits`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=26;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=27;
 
 --
 -- AUTO_INCREMENT для таблицы `deposit_currencies`
@@ -970,13 +1000,13 @@ ALTER TABLE `exchange_rates`
 -- AUTO_INCREMENT для таблицы `expenses`
 --
 ALTER TABLE `expenses`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT для таблицы `expense_categories`
 --
 ALTER TABLE `expense_categories`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- AUTO_INCREMENT для таблицы `limit_orders`
@@ -1006,7 +1036,7 @@ ALTER TABLE `platforms`
 -- AUTO_INCREMENT для таблицы `portfolio`
 --
 ALTER TABLE `portfolio`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=81;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=83;
 
 --
 -- AUTO_INCREMENT для таблицы `portfolio_structure`
@@ -1019,6 +1049,12 @@ ALTER TABLE `portfolio_structure`
 --
 ALTER TABLE `sectors`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=12;
+
+--
+-- AUTO_INCREMENT для таблицы `sold_lots`
+--
+ALTER TABLE `sold_lots`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT для таблицы `stock_sectors_en`
@@ -1036,7 +1072,7 @@ ALTER TABLE `stock_sectors_ru`
 -- AUTO_INCREMENT для таблицы `trades`
 --
 ALTER TABLE `trades`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=150;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=151;
 
 --
 -- AUTO_INCREMENT для таблицы `transfers`
@@ -1048,7 +1084,7 @@ ALTER TABLE `transfers`
 -- AUTO_INCREMENT для таблицы `user_settings`
 --
 ALTER TABLE `user_settings`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=67;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=77;
 
 --
 -- Ограничения внешнего ключа сохраненных таблиц
@@ -1089,6 +1125,13 @@ ALTER TABLE `portfolio`
   ADD CONSTRAINT `portfolio_ibfk_1` FOREIGN KEY (`asset_id`) REFERENCES `assets` (`id`),
   ADD CONSTRAINT `portfolio_ibfk_2` FOREIGN KEY (`platform_id`) REFERENCES `platforms` (`id`),
   ADD CONSTRAINT `portfolio_ibfk_3` FOREIGN KEY (`currency_code`) REFERENCES `currencies` (`code`);
+
+--
+-- Ограничения внешнего ключа таблицы `sold_lots`
+--
+ALTER TABLE `sold_lots`
+  ADD CONSTRAINT `sold_lots_ibfk_1` FOREIGN KEY (`sell_trade_id`) REFERENCES `trades` (`id`),
+  ADD CONSTRAINT `sold_lots_ibfk_2` FOREIGN KEY (`buy_trade_id`) REFERENCES `trades` (`id`);
 
 --
 -- Ограничения внешнего ключа таблицы `trades`
