@@ -1909,13 +1909,10 @@
                                 </td>
                                 <td class="text-right">
                                     <?= $asset['quantity_formatted'] ?? number_format($asset['total_quantity'] ?? 0, 0, '.', ' ') ?>
-                                    <span class="asset-symbol-small"><?= htmlspecialchars($display_currency) ?></span>
                                 </td>
                                 <td class="text-right">
-                                    <?= $asset['avg_price_formatted'] ?? '—' ?>
-                                    <?php if (($asset['avg_price'] ?? 0) > 0): ?>
-                                    <span class="asset-symbol-small"><?= htmlspecialchars($asset['currency_code'] ?: 'USD') ?></span>
-                                    <?php endif; ?>
+                                    <?= $asset['avg_price_formatted'] ?>
+                                    <span class="asset-symbol-small"><?= $asset['avg_price_currency_display'] ?></span>
                                 </td>
                                 <td class="text-right">
                                     <?= $asset['purchase_cost_formatted'] ?? '—' ?>

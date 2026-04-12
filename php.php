@@ -778,63 +778,220 @@ $eth_percent = $eth_cost > 0 ? round(($eth_cost / $total_crypto_value) * 100, 1)
 $altcoins_percent = $altcoins_cost > 0 ? round(($altcoins_cost / $total_crypto_value) * 100, 1) : 0;
 $stablecoins_percent = $stablecoins_left > 0 ? round(($stablecoins_left / $total_crypto_value) * 100, 1) : 0;
 
-// Получаем активы пользователя с расширенной информацией для новой таблицы
-$stmt = $pdo->query("
+// ============================================================
+// РАСЧЕТ СРЕДНЕЙ ЦЕНЫ ДЛЯ ВСЕХ СТЕЙБЛКОИНОВ И USD КАК ЕДИНОГО ЦЕЛОГО
+// Группа: USD, USDT, USDC, DAI, BUSD и т.д.
+// Формула: Σ(quantity × price) / Σ(quantity) для всех покупок группы
+// ============================================================
+
+// 1. Сначала определим, какие символы входят в группу стейблкоинов
+$stablecoin_group = ['USD', 'USDT', 'USDC', 'DAI', 'BUSD'];
+
+// 2. Получаем все активы с расчетом средней цены
+$query = "
     SELECT 
         a.id,
         a.symbol,
-        MIN(a.name) as name,
-        MIN(a.type) as type,
-        MIN(a.currency_code) as currency_code,
-        SUM(p.quantity) as total_quantity,
-        -- Средневзвешенная цена
+        a.name,
+        a.type,
+        a.currency_code,
+        
+        -- Берем остаток ИЗ PORTFOLIO
+        SUM(p.quantity) AS total_quantity,
+        
+        -- Рассчитываем среднюю цену из trades (только покупки)
         CASE 
-            WHEN SUM(p.quantity) = 0 THEN 0
-            ELSE SUM(p.quantity * COALESCE(p.average_buy_price, 0)) / SUM(p.quantity)
-        END as avg_price,
-        -- Стоимость покупки
-        SUM(p.quantity * COALESCE(p.average_buy_price, 0)) as purchase_cost,
-        -- Текущая цена из последней покупки (связываем по asset_id)
-        COALESCE(
-            (SELECT price FROM trades t 
-             WHERE t.asset_id = a.id
-             AND t.operation_type = 'buy' 
-             ORDER BY t.operation_date DESC LIMIT 1), 0
-        ) as current_price,
+            WHEN (
+                SELECT COALESCE(SUM(t2.quantity), 0)
+                FROM trades t2
+                WHERE t2.asset_id = a.id
+                AND t2.operation_type = 'buy'
+            ) > 0 
+            THEN (
+                SELECT SUM(t2.quantity * t2.price) / SUM(t2.quantity)
+                FROM trades t2
+                WHERE t2.asset_id = a.id
+                AND t2.operation_type = 'buy'
+            )
+            ELSE 0
+        END AS avg_price,
+        
+        -- ВАЛЮТА СРЕДНЕЙ ЦЕНЫ (берем валюту из первой покупки)
+        (
+            SELECT price_currency
+            FROM trades t6
+            WHERE t6.asset_id = a.id
+            AND t6.operation_type = 'buy'
+            ORDER BY t6.operation_date ASC
+            LIMIT 1
+        ) AS avg_price_currency,
+        
+        -- Стоимость покупки (остаток * средняя цена)
+        SUM(p.quantity) * CASE 
+            WHEN (
+                SELECT COALESCE(SUM(t2.quantity), 0)
+                FROM trades t2
+                WHERE t2.asset_id = a.id
+                AND t2.operation_type = 'buy'
+            ) > 0 
+            THEN (
+                SELECT SUM(t2.quantity * t2.price) / SUM(t2.quantity)
+                FROM trades t2
+                WHERE t2.asset_id = a.id
+                AND t2.operation_type = 'buy'
+            )
+            ELSE 0
+        END AS purchase_cost,
+        
+        -- Текущая цена (последняя покупка)
+        (
+            SELECT price 
+            FROM trades t3 
+            WHERE t3.asset_id = a.id 
+            AND t3.operation_type = 'buy' 
+            ORDER BY t3.operation_date DESC 
+            LIMIT 1
+        ) AS current_price,
+        
         -- Валюта текущей цены
-        COALESCE(
-            (SELECT price_currency FROM trades t 
-             WHERE t.asset_id = a.id
-             AND t.operation_type = 'buy' 
-             ORDER BY t.operation_date DESC LIMIT 1), 'USD'
-        ) as current_price_currency
+        (
+            SELECT price_currency 
+            FROM trades t4 
+            WHERE t4.asset_id = a.id 
+            AND t4.operation_type = 'buy' 
+            ORDER BY t4.operation_date DESC 
+            LIMIT 1
+        ) AS current_price_currency
+        
     FROM portfolio p
     JOIN assets a ON p.asset_id = a.id
     WHERE p.quantity > 0
-    GROUP BY a.symbol
+      AND a.is_active = 1
+    GROUP BY a.id, a.symbol, a.name, a.type, a.currency_code
     ORDER BY 
         CASE 
-            WHEN MIN(a.type) = 'crypto' THEN 1
-            WHEN MIN(a.type) = 'stock' THEN 2
-            WHEN MIN(a.type) = 'etf' THEN 3
-            WHEN MIN(a.type) = 'currency' THEN 4
-            WHEN MIN(a.type) = 'bond' THEN 5
+            WHEN a.type = 'crypto' THEN 1
+            WHEN a.type = 'stock' THEN 2
+            WHEN a.type = 'etf' THEN 3
+            WHEN a.type = 'currency' THEN 4
+            WHEN a.type = 'bond' THEN 5
             ELSE 6
         END,
-        SUM(p.quantity * COALESCE(p.average_buy_price, 0)) DESC
-");
+        SUM(p.quantity) DESC
+";
 
+$stmt = $pdo->query($query);
 $my_assets = $stmt->fetchAll();
+
+// Получаем курс USD/RUB
+$usd_rub_rate = 92.5;
+$rate_query = $pdo->query("
+    SELECT rate 
+    FROM exchange_rates 
+    WHERE from_currency = 'USD' AND to_currency = 'RUB' 
+    ORDER BY date DESC 
+    LIMIT 1
+");
+if ($rate_row = $rate_query->fetch()) {
+    $usd_rub_rate = floatval($rate_row['rate']);
+}
+
+// ============================================================
+// РАСЧЕТ ОБЩЕЙ СРЕДНЕЙ ЦЕНЫ ДЛЯ ВСЕХ СТЕЙБЛКОИНОВ
+// ============================================================
+
+// Собираем все покупки стейблкоинов из trades
+$stable_total_quantity = 0;
+$stable_total_cost = 0;
+
+foreach ($stablecoin_group as $stable_symbol) {
+    // Ищем asset_id для каждого стейблкоина
+    $asset_query = $pdo->prepare("SELECT id FROM assets WHERE symbol = ?");
+    $asset_query->execute([$stable_symbol]);
+    $asset_row = $asset_query->fetch();
+    
+    if ($asset_row) {
+        $asset_id = $asset_row['id'];
+        
+        // Суммируем все покупки этого стейблкоина
+        $trade_query = $pdo->prepare("
+            SELECT 
+                COALESCE(SUM(quantity), 0) as total_qty,
+                COALESCE(SUM(quantity * price), 0) as total_cost
+            FROM trades
+            WHERE asset_id = ? AND operation_type = 'buy'
+        ");
+        $trade_query->execute([$asset_id]);
+        $trade_data = $trade_query->fetch();
+        
+        $stable_total_quantity += floatval($trade_data['total_qty']);
+        $stable_total_cost += floatval($trade_data['total_cost']);
+    }
+}
+
+// Общая средняя цена для всех стейблкоинов
+$stable_avg_price = $stable_total_quantity > 0 ? $stable_total_cost / $stable_total_quantity : 0;
+
+// Определяем основную валюту для стейблкоинов (по большинству покупок)
+$stable_currency = 'RUB'; // по умолчанию
+if ($stable_avg_price > 0) {
+    // Проверяем, в какой валюте больше всего покупок
+    $currency_query = $pdo->query("
+        SELECT price_currency, COUNT(*) as cnt
+        FROM trades t
+        JOIN assets a ON t.asset_id = a.id
+        WHERE a.symbol IN ('" . implode("','", $stablecoin_group) . "')
+        AND t.operation_type = 'buy'
+        GROUP BY price_currency
+        ORDER BY cnt DESC
+        LIMIT 1
+    ");
+    $currency_row = $currency_query->fetch();
+    if ($currency_row) {
+        $stable_currency = $currency_row['price_currency'];
+    }
+}
+
+// ============================================================
+// ФОРМАТИРОВАНИЕ КАЖДОГО АКТИВА
+// ============================================================
 
 foreach ($my_assets as &$asset) {
     $quantity = floatval($asset['total_quantity']);
-    $avg_price = floatval($asset['avg_price']);
     $current_price = floatval($asset['current_price']);
     $current_price_currency = $asset['current_price_currency'];
-    $purchase_cost = floatval($asset['purchase_cost']);
     
-    // Для RUB особая логика
-    if ($asset['symbol'] == 'RUB') {
+    // ПРОВЕРКА: является ли актив стейблкоином
+    $is_stablecoin = in_array($asset['symbol'], $stablecoin_group);
+    
+    if ($is_stablecoin) {
+        // Для стейблкоинов используем ОБЩУЮ среднюю цену
+        $avg_price = $stable_avg_price;
+        $avg_price_currency = $stable_currency;
+        
+        // Стоимость покупки = остаток * общая средняя цена
+        $purchase_cost = $quantity * $avg_price;
+        
+        // Текущая цена для стейблкоина всегда 1 в валюте привязки
+        // Но для отображения используем последнюю цену из trades
+        if ($asset['symbol'] == 'USD') {
+            $current_price_display = 1.00;
+            $current_price_currency_display = 'USD';
+        } else {
+            $current_price_display = $current_price;
+            $current_price_currency_display = $current_price_currency;
+        }
+    } else {
+        // Для обычных активов
+        $avg_price = floatval($asset['avg_price']);
+        $avg_price_currency = $asset['avg_price_currency'];
+        $purchase_cost = floatval($asset['purchase_cost']);
+        $current_price_display = $current_price;
+        $current_price_currency_display = $current_price_currency;
+    }
+    
+    // Для активов без цены
+    if ($avg_price == 0 || $avg_price_currency == null) {
         $asset['avg_price_formatted'] = '—';
         $asset['purchase_cost_formatted'] = '—';
         $asset['current_price_formatted'] = '—';
@@ -842,87 +999,154 @@ foreach ($my_assets as &$asset) {
         $asset['profit_formatted'] = '—';
         $asset['profit_percent_formatted'] = '—';
         $asset['profit_class'] = 'profit-neutral';
-        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ');
+        
+        // Форматирование количества
+        if ($asset['type'] == 'crypto') {
+            if ($quantity < 1) {
+                $formatted = rtrim(rtrim(number_format($quantity, 8, ',', ' '), '0'), ',');
+                $asset['quantity_formatted'] = $formatted;
+            } else {
+                $formatted = number_format($quantity, 8, ',', ' ');
+                $formatted = rtrim(rtrim($formatted, '0'), ',');
+                $asset['quantity_formatted'] = $formatted;
+            }
+        } elseif ($asset['type'] == 'stock') {
+            $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ') . ' шт';
+        } else {
+            $asset['quantity_formatted'] = number_format($quantity, 2, ',', ' ');
+        }
         continue;
     }
+
+// ============================================================
+// ФОРМАТИРОВАНИЕ СРЕДНЕЙ ЦЕНЫ (ТОЛЬКО ЧИСЛО, без символа)
+// ============================================================
+
+// Форматируем только число (без валюты)
+if ($avg_price_currency == 'RUB') {
+    $asset['avg_price_formatted'] = number_format($avg_price, 2, '.', ' ');
+} elseif ($asset['type'] == 'crypto' && ($avg_price_currency == 'USDT' || $avg_price_currency == 'USD')) {
+    $asset['avg_price_formatted'] = number_format($avg_price, 4, '.', ' ');
+} elseif ($asset['type'] == 'crypto') {
+    $asset['avg_price_formatted'] = number_format($avg_price, 6, '.', ' ');
+} else {
+    $asset['avg_price_formatted'] = number_format($avg_price, 2, '.', ' ');
+}
+
+// Сохраняем валюту для отображения в span
+$asset['avg_price_currency_display'] = $avg_price_currency;
+
+// ============================================================
+// ФОРМАТИРОВАНИЕ ТЕКУЩЕЙ ЦЕНЫ (ТОЛЬКО ЧИСЛО)
+// ============================================================
+
+if ($current_price_currency_display == 'RUB') {
+    $asset['current_price_formatted'] = number_format($current_price_display, 2, '.', ' ');
+} elseif ($asset['type'] == 'crypto' && ($current_price_currency_display == 'USDT' || $current_price_currency_display == 'USD')) {
+    $asset['current_price_formatted'] = number_format($current_price_display, 4, '.', ' ');
+} elseif ($asset['type'] == 'crypto') {
+    $asset['current_price_formatted'] = number_format($current_price_display, 6, '.', ' ');
+} else {
+    $asset['current_price_formatted'] = number_format($current_price_display, 2, '.', ' ');
+}
+
+$asset['current_price_currency_display'] = $current_price_currency_display;
+
+// ============================================================
+// ФОРМАТИРОВАНИЕ ОСТАЛЬНЫХ ПОЛЕЙ (здесь оставляем символы)
+// ============================================================
+
+// Стоимость покупки и текущая стоимость - в долларах с символом
+$asset['purchase_cost_formatted'] = $purchase_cost_usd > 0 ? number_format($purchase_cost_usd, 2, '.', ' ') . ' $' : '—';
+$asset['current_value_formatted'] = $current_value_usd > 0 ? number_format($current_value_usd, 2, '.', ' ') . ' $' : '—';
+
+// Прибыль в долларах с символом
+if ($profit != 0) {
+    $asset['profit_formatted'] = ($profit > 0 ? '+' : '') . number_format(abs($profit), 2, '.', ' ') . ' $';
+    $asset['profit_percent_formatted'] = ($profit_percent > 0 ? '+' : '') . number_format(abs($profit_percent), 2, '.', ' ') . '%';
+    $asset['profit_class'] = $profit > 0 ? 'profit-positive' : 'profit-negative';
+} else {
+    $asset['profit_formatted'] = '0 $';
+    $asset['profit_percent_formatted'] = '0%';
+    $asset['profit_class'] = 'profit-neutral';
+}
     
-    // Конвертируем текущую цену в USD для расчёта
-    $price_for_profit = $current_price;
-    if ($current_price_currency == 'RUB') {
-        $price_for_profit = $current_price / $usd_rub_rate;
-    } elseif ($current_price_currency == 'EUR') {
-        $price_for_profit = $current_price * 1.08;
+    // ============================================================
+    // РАСЧЕТ ПРИБЫЛИ (всегда в USD)
+    // ============================================================
+    
+    // Конвертируем среднюю цену в USD
+    $avg_price_in_usd = $avg_price;
+    if ($avg_price_currency == 'RUB') {
+        $avg_price_in_usd = $avg_price / $usd_rub_rate;
+    } elseif ($avg_price_currency == 'EUR') {
+        $avg_price_in_usd = $avg_price * 1.08;
     }
+    
+    // Конвертируем текущую цену в USD
+    $current_price_in_usd = $current_price_display;
+    if ($current_price_currency_display == 'RUB') {
+        $current_price_in_usd = $current_price_display / $usd_rub_rate;
+    } elseif ($current_price_currency_display == 'EUR') {
+        $current_price_in_usd = $current_price_display * 1.08;
+    }
+    
+    // Стоимость покупки в USD
+    $purchase_cost_usd = $quantity * $avg_price_in_usd;
     
     // Текущая стоимость в USD
-    $current_value = $quantity * $price_for_profit;
+    $current_value_usd = $quantity * $current_price_in_usd;
     
     // Прибыль/убыток
-    $profit = $current_value - $purchase_cost;
-    $profit_percent = $purchase_cost > 0 ? ($profit / $purchase_cost) * 100 : 0;
-    
-    $asset['current_value'] = $current_value;
-    $asset['profit'] = $profit;
-    $asset['profit_percent'] = $profit_percent;
-    
-    // ============================================================
-    // ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА
-    // ============================================================
-    
-    // Стейблкоины (USDT, USDC) - как валюта, без запятой
-    if ($asset['type'] == 'crypto' && ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC')) {
-        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ');
-    }
-    // Остальные криптовалюты - с запятой
-    elseif ($asset['type'] == 'crypto') {
-        if ($quantity < 1) {
-            $formatted = rtrim(rtrim(number_format($quantity, 8, ',', ' '), '0'), ',');
-            $asset['quantity_formatted'] = $formatted;
-        } else {
-            $formatted = number_format($quantity, 8, ',', ' ');
-            $formatted = rtrim(rtrim($formatted, '0'), ',');
-            $asset['quantity_formatted'] = $formatted;
-        }
-    }
-    // Акции
-    elseif ($asset['type'] == 'stock') {
-        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ') . ' шт';
-    }
-    // Валюты (USD, EUR и др.)
-    elseif ($asset['type'] == 'currency') {
-        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ');
-    }
-    // Облигации
-    elseif ($asset['type'] == 'bond') {
-        $asset['quantity_formatted'] = number_format($quantity, 2, ',', ' ');
-    }
-    // Остальные типы
-    else {
-        $asset['quantity_formatted'] = number_format($quantity, 2, ',', ' ');
-    }
+    $profit = $current_value_usd - $purchase_cost_usd;
+    $profit_percent = $purchase_cost_usd > 0 ? ($profit / $purchase_cost_usd) * 100 : 0;
     
     // ============================================================
     // ФОРМАТИРОВАНИЕ ОСТАЛЬНЫХ ПОЛЕЙ
     // ============================================================
     
-    $asset['avg_price_formatted'] = $avg_price > 0 ? number_format($avg_price, 2, '.', ' ') : '—';
-    $asset['purchase_cost_formatted'] = $purchase_cost > 0 ? number_format($purchase_cost, 2, '.', ' ') : '—';
-    $asset['current_price_formatted'] = $current_price > 0 ? number_format($current_price, 2, '.', ' ') : '—';
-    $asset['current_value_formatted'] = $current_value > 0 ? number_format($current_value, 2, '.', ' ') : '—';
+    $asset['purchase_cost_formatted'] = $purchase_cost_usd > 0 ? number_format($purchase_cost_usd, 2, '.', ' ') . ' $' : '—';
+    $asset['current_value_formatted'] = $current_value_usd > 0 ? number_format($current_value_usd, 2, '.', ' ') . ' $' : '—';
     
     if ($profit != 0) {
-        $asset['profit_formatted'] = ($profit > 0 ? '+' : '') . number_format(abs($profit), 2, '.', ' ');
-        $asset['profit_percent_formatted'] = ($profit_percent > 0 ? '+' : '') . number_format(abs($profit_percent), 2, '.', ' ');
+        $asset['profit_formatted'] = ($profit > 0 ? '+' : '') . number_format(abs($profit), 2, '.', ' ') . ' $';
+        $asset['profit_percent_formatted'] = ($profit_percent > 0 ? '+' : '') . number_format(abs($profit_percent), 2, '.', ' ') . '%';
         $asset['profit_class'] = $profit > 0 ? 'profit-positive' : 'profit-negative';
     } else {
-        $asset['profit_formatted'] = '0';
-        $asset['profit_percent_formatted'] = '0';
+        $asset['profit_formatted'] = '0 $';
+        $asset['profit_percent_formatted'] = '0%';
         $asset['profit_class'] = 'profit-neutral';
     }
+    
+    // ============================================================
+    // ФОРМАТИРОВАНИЕ КОЛИЧЕСТВА
+    // ============================================================
+    
+    if ($asset['type'] == 'crypto') {
+        if ($asset['symbol'] == 'USDT' || $asset['symbol'] == 'USDC') {
+            $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ');
+        } else {
+            if ($quantity < 1) {
+                $formatted = rtrim(rtrim(number_format($quantity, 8, ',', ' '), '0'), ',');
+                $asset['quantity_formatted'] = $formatted;
+            } else {
+                $formatted = number_format($quantity, 8, ',', ' ');
+                $formatted = rtrim(rtrim($formatted, '0'), ',');
+                $asset['quantity_formatted'] = $formatted;
+            }
+        }
+    } elseif ($asset['type'] == 'stock') {
+        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ') . ' шт';
+    } elseif ($asset['type'] == 'currency') {
+        $asset['quantity_formatted'] = number_format($quantity, 0, '.', ' ');
+    } elseif ($asset['type'] == 'bond') {
+        $asset['quantity_formatted'] = number_format($quantity, 2, ',', ' ');
+    } else {
+        $asset['quantity_formatted'] = number_format($quantity, 2, ',', ' ');
+    }
 }
-// ========== ГЛАВНОЕ: УНИЧТОЖАЕМ ССЫЛКУ ПОСЛЕ ЦИКЛА ==========
 unset($asset);
-// ============================================================
+
 
 // Получаем лимитные ордера
 $stmt = $pdo->query("
